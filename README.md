@@ -66,7 +66,7 @@ User Browser
 ├─ runTool() → Python tool_caller.py → Canvas API
 └─ Summary → LLM
 ```
-
+![CanvasPal Pipeline](CanvasPal_Pipeline.png)
 ---
 
 ## 🛠 Tech Stack
