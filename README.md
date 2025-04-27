@@ -3,7 +3,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)  
 [![ChatGPT-powered](https://img.shields.io/badge/AI–Powered–Perplexity-blue?logo=openai)]()
 
-CanvasPal is a Next.js + TypeScript application that transforms your Canvas learning platform into an AI-driven study assistant. Leveraging Perplexity’s LLM and the Canvas API, CanvasPal can:
+Created by Diego Ramirez, Khoa Nguyen, Lauren Kim, Patrick Higgins, Tristian Bradley, and Will Killebrew
+
+---
+
+CanvasPal is a Next.js + TypeScript application built for a hackathon that transforms your Canvas learning platform into an AI-driven study assistant. Leveraging Perplexity’s LLM and the Canvas API, CanvasPal can:
 
 - **Discover** your courses, assignments, announcements, grades, and people.  
 - **Plan** multi-step workflows in natural language.  
