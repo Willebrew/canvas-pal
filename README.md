@@ -10,7 +10,7 @@ CanvasPal is a Next.js + TypeScript application that transforms your Canvas lear
 - **Execute** Canvas queries via serverless functions and a Python bridge.  
 - **Summarize** results in clear, conversational prose.  
 - **Theme** itself with light/dark modes powered by Tailwind CSS v4’s CSS-first configuration.  
-- **Deploy** instantly on Vercel using Next.js App Router and Turbopack.
+- **Deploy** instantly on Vercel using Next.js App Router and Turbopack. (With changes to the Python runtime)
 
 ---
 
