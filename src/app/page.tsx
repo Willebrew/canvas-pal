@@ -1,103 +1,319 @@
-import Image from "next/image";
+// src/app/page.tsx – v3.3.18
+'use client';
 
-export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+import 'katex/dist/katex.min.css';
+import React, {
+    useState, useEffect, useRef, useCallback, useMemo, FormEvent,
+} from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import ChatHeader from '@/components/ChatHeader';
+import ChatMessage from '@/components/ChatMessage';
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+/* ---------- types ---------- */
+type Msg = { role: 'user' | 'assistant'; content: unknown };
+
+interface SSEPlanEvent   { type: 'plan';    plan: any[] }
+interface SSEStatusEvent { type: 'status';  message: string }
+interface SSEStepEvent   { type: 'step';    index: number; step: string; output: string }
+interface SSESummEvent   { type: 'summary'; summary: string | object; complete_all?: boolean; error?: boolean }
+type SSEEvent = SSEPlanEvent | SSEStatusEvent | SSEStepEvent | SSESummEvent;
+
+/* ---------- helpers ---------- */
+const toDisplay = (c: unknown): string => {
+    if (typeof c === 'string') return c;
+    if (c === null || c === undefined) return '';
+    if (typeof c === 'object') {
+        try {
+            return JSON.stringify(c, null, 2);
+        } catch (e) {
+            return '[Object]';
+        }
+    }
+    return String(c);
+};
+
+const stripHidden = (s: string): string =>
+    s.replace(/<!--CONTEXT[\s\S]*?CONTEXT-->/g, '');
+
+const isMsg = (v: unknown): v is Msg =>
+    typeof v === 'object' && v !== null && 'role' in v && 'content' in v;
+
+/* ---------- Plan chain ---------- */
+function PlanChain({ plan, done }: { plan: any[]; done: number[] }) {
+    return (
+        <>
+            <div className="text-xs font-semibold mb-2 text-muted-foreground">Plan:</div>
+            <div className="space-y-2">
+                {plan.map((stepItem, i) => {
+                    const finished = done.includes(i);
+                    const active = done.length === i && !finished;
+
+                    // Handle case where stepItem is an object with keys {step, action, description}
+                    const stepText = typeof stepItem === 'string'
+                        ? stepItem
+                        : (stepItem && typeof stepItem === 'object' && 'step' in stepItem)
+                            ? `${stepItem.step}${stepItem.action ? `: ${stepItem.action}` : ''}${stepItem.description ? ` - ${stepItem.description}` : ''}`
+                            : JSON.stringify(stepItem);
+
+                    return (
+                        <div key={i} className="flex items-center space-x-2">
+                            <motion.div
+                                animate={active ? { scale: [1, 1.3, 1] } : {}}
+                                className={`w-3 h-3 rounded-full
+                                    ${finished
+                                    ? 'bg-accent'
+                                    : active
+                                        ? 'bg-accent animate-pulse'
+                                        : 'bg-border'
+                                }`}
+                            />
+                            <span className={finished ? 'line-through text-muted-foreground' : ''}>
+                                {stepText}
+                            </span>
+                        </div>
+                    );
+                })}
+            </div>
+        </>
+    );
+}
+
+/* ---------- Main page ---------- */
+export default function HomePage() {
+    const [messages, setMessages]       = useState<Msg[]>([]);
+    const [plan, setPlan]               = useState<any[]>([]);
+    const [done, setDone]               = useState<number[]>([]);
+    const [input, setInput]             = useState('');
+    const [loading, setLoading]         = useState(false);
+    const [planVisible, setPlanVisible] = useState(false);
+
+    const bottomRef = useRef<HTMLDivElement>(null);
+    const abortRef  = useRef<AbortController | null>(null);
+
+    /* ---------- splash pixels ---------- */
+    const showSplash = messages.length === 0;
+    const [mounted, setMounted] = useState(false);
+    useEffect(() => setMounted(true), []);
+    const pixels = useMemo(() => {
+        const colors = ['bg-red-600','bg-yellow-500','bg-green-600',
+            'bg-purple-600','bg-pink-600','bg-orange-500'];
+        return Array.from({ length: 60 }, (_, id) => ({
+            id,
+            x: Math.random() * 100,
+            y: Math.random() * 100,
+            color: colors[Math.floor(Math.random() * colors.length)],
+            delay: Math.random() * 2,
+            duration: 1 + Math.random() * 2,
+        }));
+    }, []);
+
+    /* ---------- restore & persist ---------- */
+    useEffect(() => {
+        const saved = sessionStorage.getItem('canvaspal_messages');
+        if (!saved) return;
+        try {
+            const raw = JSON.parse(saved);
+            if (Array.isArray(raw)) setMessages(raw.filter(isMsg));
+        } catch { sessionStorage.removeItem('canvaspal_messages'); }
+    }, []);
+
+    useEffect(() => {
+        sessionStorage.setItem('canvaspal_messages', JSON.stringify(messages));
+    }, [messages]);
+
+    useEffect(() => {
+        setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+    }, [messages, loading]);
+
+    /* ---------- actions ---------- */
+    const newChat = () => {
+        abortRef.current?.abort();
+        setMessages([]); setPlan([]); setDone([]);
+        setInput(''); setLoading(false); setPlanVisible(false);
+        sessionStorage.clear();
+    };
+
+    const cancel = () => {
+        abortRef.current?.abort();
+        setLoading(false); setPlanVisible(false);
+        setMessages(m => [
+            ...m.slice(0, -1),
+            { role: 'assistant', content: 'Request cancelled.' },
+        ]);
+    };
+
+    /* ---------- send / SSE ---------- */
+    const send = useCallback(async () => {
+        if (!input.trim() || loading) return;
+
+        const dedup = messages.reduce<Msg[]>((acc, m) => {
+            if (acc.length && acc.at(-1)!.role === 'assistant' && m.role === 'assistant') acc[acc.length - 1] = m;
+            else acc.push(m);
+            return acc;
+        }, []);
+
+        const userMsg: Msg = { role: 'user', content: input.trim() };
+        const toSend = [...dedup, userMsg];
+
+        setMessages(toSend);
+        setPlan([]); setDone([]); setPlanVisible(true);
+        setInput(''); setLoading(true);
+
+        abortRef.current?.abort();
+        const ctrl = new AbortController();
+        abortRef.current = ctrl;
+
+        try {
+            const res = await fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ messages: toSend }),
+                signal: ctrl.signal,
+            });
+            if (!res.ok) throw new Error(await res.text());
+
+            const reader = res.body!.getReader();
+            const dec    = new TextDecoder();
+            let buf      = '';
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done || ctrl.signal.aborted) break;
+                buf += dec.decode(value, { stream: true });
+                const parts = buf.split('\n\n');
+                buf = parts.pop() ?? '';
+
+                for (const part of parts) {
+                    if (!part.startsWith('data: ')) continue;
+                    const raw = part.slice(6).trim();
+                    if (raw === '[DONE]') continue;
+
+                    let evt: SSEEvent;
+                    try { evt = JSON.parse(raw) as SSEEvent; } catch { continue; }
+
+                    if (evt.type === 'plan')   setPlan(evt.plan);
+                    if (evt.type === 'step')   setDone(d => [...d, evt.index]);
+                    if (evt.type === 'summary') {
+                        setPlanVisible(false);
+                        const txt = toDisplay(evt.summary);
+                        setMessages(m => [...m, { role: 'assistant', content: txt }]);
+                    }
+                }
+            }
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            setPlanVisible(false);
+            setMessages(m => [...m, { role: 'assistant', content: `⚠️ ${msg}` }]);
+        } finally {
+            setLoading(false);
+            abortRef.current = null;
+        }
+    }, [input, loading, messages]);
+
+    /* ---------- render ---------- */
+    return (
+        <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden">
+            <ChatHeader onNewChatAction={newChat} />
+
+            {/* Plan bar */}
+            <AnimatePresence>
+                {planVisible && plan.length > 0 && (
+                    <motion.div
+                        key="plan"
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.25 }}
+                        className="sticky top-0 z-20 overflow-hidden bg-background/30 backdrop-blur-md border-b border-base px-4 py-2"
+                    >
+                        <PlanChain plan={plan} done={done} />
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            {/* Splash */}
+            {showSplash && (
+                <motion.div
+                    className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-tr from-accent/10 to-container/10 z-10 pointer-events-none"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                >
+                    {mounted && pixels.map(p => (
+                        <motion.div
+                            key={p.id}
+                            className={`w-1 h-1 ${p.color} absolute rounded-sm`}
+                            style={{ left: `${p.x}%`, top: `${p.y}%` }}
+                            animate={{ opacity: [0, 1, 0] }}
+                            transition={{ repeat: Infinity, duration: p.duration, delay: p.delay }}
+                        />
+                    ))}
+                    <motion.div
+                        className="relative z-20 flex flex-col items-center space-y-4"
+                        initial={{ scale: 0 }}
+                        animate={{ scale: 1 }}
+                        transition={{ type: 'spring', stiffness: 260, damping: 20 }}
+                    >
+                        <img src="/logo.png" alt="CanvasPal" className="w-32 h-32" />
+                        <motion.h1
+                            className="text-4xl font-bold"
+                            animate={{ scale: [1, 1.05, 1] }}
+                            transition={{ repeat: Infinity, duration: 4 }}
+                        >
+                            CanvasPal
+                        </motion.h1>
+                        <motion.p
+                            className="text-lg text-muted-foreground"
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.5 }}
+                        >
+                            Focus on Learning, Not on Canvas
+                        </motion.p>
+                    </motion.div>
+                </motion.div>
+            )}
+
+            {/* chat list */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-32">
+                {messages.map((m, i) => (
+                    <motion.div key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+                        <ChatMessage
+                            role={m.role as 'user' | 'assistant'}
+                            content={stripHidden(toDisplay(m.content))}
+                        />
+                    </motion.div>
+                ))}
+                <div ref={bottomRef} />
+            </div>
+
+            {/* Footer */}
+            <div className="sticky bottom-0 z-20 bg-background/30 backdrop-blur-md border-t border-base p-4">
+                <form
+                    onSubmit={(e: FormEvent) => { e.preventDefault(); send(); }}
+                    className="flex items-center bg-background/30 backdrop-blur-md rounded px-2"
+                >
+                    <input
+                        value={input}
+                        onChange={e => setInput(e.target.value)}
+                        disabled={loading}
+                        placeholder="Ask CanvasPal anything…"
+                        className="flex-1 p-3 bg-transparent outline-none placeholder:text-muted-foreground text-sm"
+                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
+                    />
+                    <button
+                        type={loading ? 'button' : 'submit'}
+                        onClick={loading ? cancel : undefined}
+                        className={`
+                            p-2 ml-2 rounded
+                            ${loading
+                            ? 'text-destructive border border-destructive hover:bg-destructive/10'
+                            : 'text-primary hover:bg-primary/10 disabled:opacity-50'}
+                        `}
+                    >
+                        {loading ? 'Cancel' : 'Send'}
+                    </button>
+                </form>
+            </div>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
-  );
+    );
 }

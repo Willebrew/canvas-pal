@@ -1,26 +1,107 @@
+/*
+ * Global CSS styles for the application.
+ * This file defines the base styles, themes, and animations used throughout the project.
+ * It includes support for light and dark themes, as well as reusable utility classes.
+ */
+
 @import "tailwindcss";
 
+/*
+ * Theme variables for dark mode.
+ * These variables define the colors for background, foreground, containers, borders, and accents.
+ */
+@theme {
+  --color-bg: 18 18 18; /* Background color */
+  --color-foreground: 229 229 229; /* Foreground (text) color */
+
+  --color-container: 30 30 30; /* Container background color */
+  --color-border: 46 46 46; /* Border color */
+
+  --color-accent: 59 130 246; /* Accent color */
+
+  --color-btn: var(--color-accent); /* Button background color */
+  --color-btntext: 255 255 255; /* Button text color */
+}
+
+/*
+ * Theme variables for light mode.
+ * Overrides the dark mode variables with light mode-specific values.
+ */
+html.light {
+  --color-bg: 255 255 255; /* Background color */
+  --color-foreground: 51 51 51; /* Foreground (text) color */
+
+  --color-container: 245 245 245; /* Container background color */
+  --color-border: 223 223 223; /* Border color */
+
+  --color-accent: 59 130 246; /* Accent color */
+
+  --color-btn: var(--color-accent); /* Button background color */
+  --color-btntext: 255 255 255; /* Button text color */
+}
+
+/*
+ * Root-level styles.
+ * Enables support for both light and dark color schemes.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: light dark;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/*
+ * Base styles for the body element.
+ * Sets the background and text colors based on the theme variables.
+ */
+body {
+  background: rgb(var(--color-bg)); /* Background color */
+  color: rgb(var(--color-foreground)); /* Text color */
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/*
+ * Utility class for setting border color.
+ * Uses the theme's border color variable.
+ */
+.border-base {
+  border-color: rgb(var(--color-border)); /* Border color */
+}
+
+/*
+ * Utility class for setting container background color.
+ * Uses the theme's container color variable.
+ */
+.bg-container {
+  background: rgb(var(--color-container)); /* Container background color */
+}
+
+/*
+ * Button styles.
+ * Applies rounded corners, padding, font styling, and theme-based colors.
+ */
+.btn {
+  @apply rounded-full px-4 py-1 font-semibold; /* Utility classes for styling */
+  background: rgb(var(--color-btn)); /* Button background color */
+  color: rgb(var(--color-btntext)); /* Button text color */
+}
+
+/*
+ * Keyframe animation for fade-in effect.
+ * Animates opacity and vertical position for a smooth entrance.
+ */
+@keyframes fadeIn {
+  from {
+    opacity: 0; /* Initial opacity */
+    transform: translateY(10px); /* Initial vertical position */
+  }
+  to {
+    opacity: 1; /* Final opacity */
+    transform: translateY(0); /* Final vertical position */
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/*
+ * Utility class for applying the fade-in animation.
+ * Uses the fadeIn keyframes with a duration of 0.3s and ease-out timing.
+ */
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out; /* Animation properties */
 }
