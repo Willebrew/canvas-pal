@@ -170,8 +170,6 @@ Visit <http://localhost:3000> to try it out.
 3. Add tests/documentation if needed.
 4. Open a pull request against `main`.
 
-Please follow our [CODE_OF_CONDUCT](CODE_OF_CONDUCT.md).
-
 ---
 
 ## 📄 License
