@@ -178,7 +178,7 @@ Visit <http://localhost:3000> to try it out.
 
 ## 📄 License
 
-This project is released under the MIT License. See [LICENSE](LICENSE) for details.
+This project is released under the GPL-3.0 License. See [LICENSE](LICENSE) for details.
 
 ---
 
