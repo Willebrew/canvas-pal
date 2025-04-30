@@ -1,8 +1,5 @@
 # CanvasPal
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)  
-[![ChatGPT-powered](https://img.shields.io/badge/AI–Powered–Perplexity-blue?logo=openai)]()
-
 Created by Diego Ramirez, Khoa Nguyen, Lauren Kim, Patrick Higgins, Tristian Bradley, and Will Killebrew
 
 ---
@@ -173,12 +170,6 @@ Visit <http://localhost:3000> to try it out.
 2. Implement your feature or fix.
 3. Add tests/documentation if needed.
 4. Open a pull request against `main`.
-
----
-
-## 📄 License
-
-This project is released under the GPL-3.0 License. See [LICENSE](LICENSE) for details.
 
 ---
 
