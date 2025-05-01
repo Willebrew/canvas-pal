@@ -1,3 +1,5 @@
+// src/app/api/chat/route.ts
+
 /**
  * CanvasPal route
  *
@@ -51,6 +53,8 @@ DISCOVERY ORDER
 3️⃣ If an assignment is referenced, call get_assignments(course_id) to discover assignment_id if not already known.
 4️⃣ Then call the final information tool.
 
+IMPORTANT: IF THE COURSE ID IS ALREADY IN THE CONTEXT MEMORY. DO NOT CALL get_courses(), SKIP THAT STEP.
+
 Return JSON only: { "steps": [ ... ] }
 
 ${TOOL_LIST}
@@ -102,15 +106,48 @@ ${TOOL_CALL_EXAMPLES}
 
 /**
  * Prompt template for summarizing the results for the user.
+ * NOTE: We explicitly instruct the model to always format 3+ items as tables,
+ *       especially the student roster, and never mention privacy or redirects.
  */
 const PROMPT_SUMMARY = `
 You are CanvasPal. Summarise the results for the student based on their latest request and the execution log.
 
 Latest Request: "{{userQuery}}"
-Executed Steps & Outputs (for this request):
+Executed Steps & Outputs:
 {{stepsLog}}
 
-Review the steps and outputs. Write a clear, friendly summary answering the latest request. Use bullet points if helpful. Be conversational, referring to the conversation history if relevant.
+— Formatting guidelines (Markdown; choose dynamically) —
+
+1. Sections & Headers  
+   • Use second-level headings (##) when you start a new section.  
+   • Separate major sections with a horizontal rule (---).
+
+2. Lists & Bullets  
+   • Use hyphens (-) or bullets (•) for short lists of 1–2 items.  
+   • Indent sub-points by two spaces.
+
+3. Tables for structured data  
+   • **Whenever you have 3 or more items in a list, render them as a Markdown table**.  
+   • Use appropriate column headers (e.g., “Student Name”) and one item per row.  
+   • For course rosters, list each student in its own row under a “Student Name” column.
+
+4. Emphasis & Callouts  
+   • **Bold** key terms.  
+   • _Italic_ for side notes.  
+   • Use blockquotes (>) for tips or warnings.
+
+5. Brevity & Clarity  
+   • Keep bullets and paragraphs to 1–2 lines.
+
+6. Tone  
+   • Friendly and conversational.  
+   • End with a short “Next Steps” bullet list or friendly closing.
+
+IMPORTANT: You have direct programmatic access to the full tool outputs.  
+**Always include the complete data returned by the tools** (e.g., the full student list from get_people_in_course).  
+Do NOT mention privacy reasons or redirect the user to Canvas’s interface.
+
+Now write the summary obeying these rules.
 `;
 
 /**
@@ -126,17 +163,17 @@ type Params = Record<string, unknown>;
 /**
  * Log entry type for tool usage.
  */
-type ToolLogEntry  = { tool: string; params?: Params; result: unknown };
+type ToolLogEntry = { tool: string; params?: Params; result: unknown };
 
 /**
  * Log entry type for completed steps.
  */
-type StepLogEntry  = { step: string; output: string };
+type StepLogEntry = { step: string; output: string };
 
 /**
  * Interface for the JSON plan returned by the LLM.
  */
-interface PlanJson   { steps: string[] }
+interface PlanJson { steps: string[] }
 
 /**
  * Interface for the result of executing a step.
@@ -182,12 +219,10 @@ async function callLLM(prompt: string, history: Msg[]): Promise<string> {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${
-                process.env.PERPLEXITY_API_KEY
-            }`,
+            Authorization: `Bearer ${process.env.PERPLEXITY_API_KEY}`,
         },
         body: JSON.stringify({
-            model: 'sonar-pro',
+            model: 'sonar',
             stream: false,
             messages: [{ role: 'system', content: prompt }, ...history],
         }),
