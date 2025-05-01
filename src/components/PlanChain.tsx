@@ -25,21 +25,25 @@ export default function PlanChain({ plan, done }: PlanChainProps) {
                     const active = done.length === i && !finished;
 
                     let stepText: string;
-                    if (typeof stepItem === 'string') {
-                        stepText = stepItem;
-                    } else if ('step' in stepItem) {
-                        stepText = `${stepItem.step}${stepItem.action ? `: ${stepItem.action}` : ''}${
-                            stepItem.description ? ` - ${stepItem.description}` : ''
-                        }`;
-                    } else if ('action' in stepItem) {
-                        stepText = `${stepItem.action}${stepItem.tool ? ` (tool: ${stepItem.tool})` : ''}`;
-                    } else if ('tool' in stepItem) {
-                        const hasParams = stepItem.params && Object.keys(stepItem.params).length > 0;
-                        stepText = hasParams
-                            ? `Call ${stepItem.tool}(${JSON.stringify(stepItem.params)})`
-                            : `Call ${stepItem.tool}()`;
-                    } else {
-                        stepText = String(stepItem);
+                    try {
+                        if (typeof stepItem === 'string') {
+                            stepText = stepItem;
+                        } else if ('step' in stepItem) {
+                            stepText = `${stepItem.step}${stepItem.action ? `: ${stepItem.action}` : ''}${
+                                stepItem.description ? ` - ${stepItem.description}` : ''
+                            }`;
+                        } else if ('action' in stepItem) {
+                            stepText = `${stepItem.action}${stepItem.tool ? ` (tool: ${stepItem.tool})` : ''}`;
+                        } else if ('tool' in stepItem) {
+                            const hasParams = stepItem.params && Object.keys(stepItem.params).length > 0;
+                            stepText = hasParams
+                                ? `Call ${stepItem.tool}(${JSON.stringify(stepItem.params)})`
+                                : `Call ${stepItem.tool}()`;
+                        } else {
+                            stepText = String(stepItem);
+                        }
+                    } catch {
+                        stepText = JSON.stringify(stepItem);
                     }
 
                     return (
@@ -58,8 +62,8 @@ export default function PlanChain({ plan, done }: PlanChainProps) {
                                     .filter(Boolean)
                                     .join(' ')}
                             >
-                {stepText}
-              </span>
+                                {stepText}
+                            </span>
                         </div>
                     );
                 })}
