@@ -1,4 +1,3 @@
-// src/components/ChatMessage.tsx
 'use client';
 
 import React from 'react';
@@ -30,9 +29,7 @@ export default function ChatMessage({ role, content, isLoading = false }: Props)
         'whitespace-pre-wrap break-words',
         isUser
             ? 'bg-blue-600 text-white dark:bg-blue-500'
-            : isLoading
-                ? 'bg-[rgb(var(--color-container))]/70 text-[rgb(var(--color-foreground))]/60'
-                : 'bg-[rgb(var(--color-container))] text-[rgb(var(--color-foreground))]'
+            : 'bg-[rgb(var(--color-container))] text-[rgb(var(--color-foreground))]'
     );
 
     return (
@@ -48,55 +45,56 @@ export default function ChatMessage({ role, content, isLoading = false }: Props)
             <div className={bubbleCls}>
                 {isUser ? (
                     <span className="leading-relaxed">{md}</span>
-                ) : isLoading ? (
-                    <span className="animate-pulse">Working on it…</span>
                 ) : (
-                    <ReactMarkdown
-                        remarkPlugins={[remarkGfm, remarkMath]}
-                        rehypePlugins={[rehypeKatex]}
-                        components={{
-                            h1: ({ children }) => <h1 className="text-2xl font-bold my-2">{children}</h1>,
-                            h2: ({ children }) => <h2 className="text-xl font-semibold my-2">{children}</h2>,
-                            h3: ({ children }) => <h3 className="text-lg font-semibold my-2">{children}</h3>,
+                    <>
+                        <ReactMarkdown
+                            remarkPlugins={[remarkGfm, remarkMath]}
+                            rehypePlugins={[rehypeKatex]}
+                            components={{
+                                h1: ({ children }) => <h1 className="text-2xl font-bold my-2">{children}</h1>,
+                                h2: ({ children }) => <h2 className="text-xl font-semibold my-2">{children}</h2>,
+                                h3: ({ children }) => <h3 className="text-lg font-semibold my-2">{children}</h3>,
+                                hr: () => <hr className="border-t border-base my-4" />,
+                                p: ({ children }) => <p className="mb-2 leading-relaxed">{children}</p>,
+                                a: ({ href, children }) => (
+                                    <a href={href} className="text-primary underline">
+                                        {children}
+                                    </a>
+                                ),
+                                ul: ({ children }) => <ul className="list-disc pl-5 mb-2">{children}</ul>,
+                                ol: ({ children }) => <ol className="list-decimal pl-5 mb-2">{children}</ol>,
+                                li: ({ children }) => <li className="mb-1">{children}</li>,
+                                table: ({ children }) => (
+                                    <div className="my-4 overflow-auto">
+                                        <table className="w-full border border-base text-sm">{children}</table>
+                                    </div>
+                                ),
+                                thead: ({ children }) => (
+                                    <thead className="bg-[rgb(var(--color-container))]">{children}</thead>
+                                ),
+                                th: ({ children }) => (
+                                    <th className="border border-base px-2 py-1 font-semibold">{children}</th>
+                                ),
+                                td: ({ children }) => (
+                                    <td className="border border-base px-2 py-1 align-top">{children}</td>
+                                ),
+                                blockquote: ({ children }) => (
+                                    <blockquote className="border-l-4 border-accent pl-4 italic mb-2">
+                                        {children}
+                                    </blockquote>
+                                ),
+                            }}
+                        >
+                            {md}
+                        </ReactMarkdown>
 
-                            hr: () => <hr className="border-t border-base my-4" />,
-
-                            p: ({ children }) => <p className="mb-2 leading-relaxed">{children}</p>,
-
-                            a: ({ href, children }) => (
-                                <a href={href} className="text-primary underline">
-                                    {children}
-                                </a>
-                            ),
-
-                            ul: ({ children }) => <ul className="list-disc pl-5 mb-2">{children}</ul>,
-                            ol: ({ children }) => <ol className="list-decimal pl-5 mb-2">{children}</ol>,
-                            li: ({ children }) => <li className="mb-1">{children}</li>,
-
-                            table: ({ children }) => (
-                                <div className="my-4 overflow-auto">
-                                    <table className="w-full border border-base text-sm">{children}</table>
-                                </div>
-                            ),
-                            thead: ({ children }) => (
-                                <thead className="bg-[rgb(var(--color-container))]">{children}</thead>
-                            ),
-                            th: ({ children }) => (
-                                <th className="border border-base px-2 py-1 font-semibold">{children}</th>
-                            ),
-                            td: ({ children }) => (
-                                <td className="border border-base px-2 py-1 align-top">{children}</td>
-                            ),
-
-                            blockquote: ({ children }) => (
-                                <blockquote className="border-l-4 border-accent pl-4 italic mb-2">
-                                    {children}
-                                </blockquote>
-                            ),
-                        }}
-                    >
-                        {md}
-                    </ReactMarkdown>
+                        {/* Show a subtle loading indicator while still streaming */}
+                        {isLoading && (
+                            <div className="mt-1 text-sm text-muted-foreground animate-pulse">
+                                Working…
+                            </div>
+                        )}
+                    </>
                 )}
             </div>
 

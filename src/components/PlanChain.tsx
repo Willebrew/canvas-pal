@@ -16,6 +16,20 @@ interface PlanChainProps {
 }
 
 export default function PlanChain({ plan, done }: PlanChainProps) {
+    // detect light mode once at render – avoids SSR mismatch
+    const isLight = typeof document !== 'undefined' && document.documentElement.classList.contains('light');
+
+    const activeTextStyle: React.CSSProperties = isLight
+        ? {
+            background: 'linear-gradient(90deg, rgba(0,0,0,0.25) 25%, rgba(0,0,0,1) 50%, rgba(0,0,0,0.25) 75%)',
+            backgroundSize: '200% 100%',
+            WebkitBackgroundClip: 'text',
+            color: 'transparent',
+            WebkitTextFillColor: 'transparent',
+            animation: 'shimmer 3s infinite',
+        }
+        : {};
+
     return (
         <>
             <div className="text-xs font-semibold mb-2 text-muted-foreground">Plan:</div>
@@ -57,10 +71,11 @@ export default function PlanChain({ plan, done }: PlanChainProps) {
                             <span
                                 className={[
                                     finished && 'line-through text-muted-foreground',
-                                    active && 'shimmer',
+                                    !isLight && active && 'shimmer',
                                 ]
                                     .filter(Boolean)
                                     .join(' ')}
+                                style={active ? activeTextStyle : undefined}
                             >
                                 {stepText}
                             </span>
@@ -76,7 +91,7 @@ export default function PlanChain({ plan, done }: PlanChainProps) {
                     background: linear-gradient(
                             90deg,
                             rgba(255, 255, 255, 0.2) 25%,
-                            rgba(255, 255, 255, 0.6) 50%,
+                            rgba(255, 255, 255, 0.8) 50%,
                             rgba(255, 255, 255, 0.2) 75%
                     );
                     background-size: 200% 100%;

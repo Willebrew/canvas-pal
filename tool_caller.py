@@ -686,7 +686,7 @@ def get_course_grade(course_id):
         dict: A dictionary containing course grade details, including:
             - weighted_average (float): The weighted average grade for the course.
             - weighted_percentage (float): The weighted percentage grade for the course.
-            - letter_grade (str): The letter grade corresponding to the weighted percentage.
+            - letter_grade (str): The letterq grade corresponding to the weighted percentage.
             - group_details (list): A list of dictionaries containing assignment group details, including:
                 - name (str): The name of the assignment group.
                 - weight (float): The weight of the assignment group.
@@ -836,6 +836,32 @@ def get_course_grade(course_id):
         debug_print(f"Error in get_course_grade: {str(e)}")
         return {"error": str(e)}
 
+def get_syllabus(course_id):
+    """
+    Get the syllabus for a course.
+
+    Args:
+        course_id (int): The ID of the course.
+
+    Returns:
+        dict: A dictionary with:
+            - course_id (int)
+            - syllabus (str): cleaned text of the syllabus
+    """
+    debug_print(f"Running get_syllabus(course_id={course_id})")
+    try:
+        course = canvas.get_course(course_id)
+        # CanvasAPI Course objects have a syllabus_body attribute
+        html = getattr(course, 'syllabus_body', None)
+        if html:
+            text = strip_html_tags(html)
+        else:
+            text = "No syllabus available."
+        return {"course_id": course_id, "syllabus": text}
+    except Exception as e:
+        debug_print(f"Error in get_syllabus: {str(e)}")
+        return {"error": str(e)}
+
 # Map tool names to their corresponding functions
 TOOLS = {
     "get_courses": get_courses,  # Retrieve a list of favorite courses
@@ -851,7 +877,8 @@ TOOLS = {
     "get_assignments_with_grades": get_assignments_with_grades,  # Retrieve assignment grades for a course
     "get_course_grade": get_course_grade,  # Retrieve the overall grade for a course
     "get_course_modules": get_course_modules,  # Retrieve a list of modules for a course
-    "get_module_description": get_module_description  # Retrieve details of a specific module
+    "get_module_description": get_module_description,  # Retrieve details of a specific module
+    "get_syllabus": get_syllabus,
 }
 
 def handle_tool_call(request_json):

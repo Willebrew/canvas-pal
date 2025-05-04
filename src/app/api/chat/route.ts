@@ -1,5 +1,3 @@
-// src/app/api/chat/route.ts
-
 /**
  * CanvasPal route
  *
@@ -14,7 +12,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { execSync } from 'child_process';
+import { execSync }     from 'child_process';
 
 export const runtime = 'nodejs';
 
@@ -37,77 +35,37 @@ AVAILABLE TOOLS
 • get_course_grade(course_id)
 • get_course_modules(course_id)
 • get_module_description(module_id)
-`;
+• get_syllabus(course_id)
+`.trim();
 
 /**
  * Prompt template for generating a step-by-step plan using Canvas tools.
  */
 const PROMPT_PLAN = `
-You are CanvasPal. Review the conversation history provided. The latest user request is: "{{userQuery}}"
+You are CanvasPal. Latest user request:
+"{{userQuery}}"
 
-Create a concise step-by-step plan using Canvas tools based on the latest request and relevant context from the history.
+Create a concise step-by-step plan using Canvas tools.
+Return **only** valid JSON:
 
-DISCOVERY ORDER
-1️⃣ Always call get_courses() if course information is needed and not already known from history or tool logs.
-2️⃣ If a course is referenced by name, find its course_id using get_courses() results if not already known.
-3️⃣ If an assignment is referenced, call get_assignments(course_id) to discover assignment_id if not already known.
-4️⃣ Then call the final information tool.
+{
+  "steps":[
+    { "tool":"get_courses","params":{} },
+    …
+  ]
+}
 
-IMPORTANT: IF THE COURSE ID IS ALREADY IN THE CONTEXT MEMORY. DO NOT CALL get_courses(), SKIP THAT STEP.
-
-Return JSON only: { "steps": [ ... ] }
-
-${TOOL_LIST}
-`;
-
-/**
- * Examples of JSON tool calls for reference.
- */
-const TOOL_CALL_EXAMPLES = `
-TOOL CALL JSON EXAMPLES
-{"tool":"get_courses","params":{}}
-{"tool":"get_assignments","params":{"course_id":190476}}
-{"tool":"get_assignment_details","params":{"course_id":190476,"assignment_id":1234567}}
-`;
-
-/**
- * Prompt template for executing a specific step in the plan.
- */
-const PROMPT_EXECUTE = `
-You are CanvasPal executing the plan.
-
-CONVERSATION HISTORY & CONTEXT
-• Latest Request: "{{userQuery}}"
-• Overall Plan: {{planJson}}
-• Current Step Index: {{currentStep}}
-• Tool Log (History of tools used *in this current execution flow*): {{toolsLog}}
-• Steps Completed (History of steps finished *in this current execution flow*): {{stepsLog}}
-
-RULES
-1. Focus ONLY on the step whose index == currentStep based on the Overall Plan.
-2. Use the Tool Log and Steps Completed for intermediate data *within this execution flow*. Refer to the Conversation History for broader context if needed.
-3. Follow discovery order strictly if IDs are needed and not present in logs.
-4. Never invent IDs; discover them with the correct tool.
-5. When the user asks for class data, don't say you can't access it – use the tools to get it. If the tools fail, then explain the issue.
-6. When data is needed for the current step, first call a tool if appropriate.
-7. After finishing the current step's reasoning or action:
-   – If NOT the last step of the plan: {"result":"<output for this step>","done":false}
-   – If it IS the last step of the plan: {"result":"<output for this step>","done":true}
-8. Tool calls must match the JSON examples.
-
-NOTE: If a user asks for information that can be accessed by a tool, use the tool to get it. If the tools fail, then explain the issue.
-DO NOT: tell the user to go find it themselves when you have a tool to grab that information unless the tool has a fatal error.
-
-Respond with one raw JSON object representing your action for step {{currentStep}}.
+Rules:
+1️⃣ Each step must be a tool call object (no narrative).
+2️⃣ Follow discovery order: get_courses → get_assignments → final tool.
+3️⃣ Skip steps if IDs already known; no duplicates.
+4️⃣ Do not add extra keys or comments.
 
 ${TOOL_LIST}
-${TOOL_CALL_EXAMPLES}
-`;
+`.trim();
 
 /**
  * Prompt template for summarizing the results for the user.
- * NOTE: We explicitly instruct the model to always format 3+ items as tables,
- *       especially the student roster, and never mention privacy or redirects.
  */
 const PROMPT_SUMMARY = `
 You are CanvasPal. Summarise the results for the student based on their latest request and the execution log.
@@ -147,13 +105,17 @@ IMPORTANT: You have direct programmatic access to the full tool outputs.
 **Always include the complete data returned by the tools** (e.g., the full student list from get_people_in_course).  
 Do NOT mention privacy reasons or redirect the user to Canvas’s interface.
 
+Please do not write footnotes
+
+Do not write citations or references to external sources. Eg. [^1^], [^1] or [1].
+
 Now write the summary obeying these rules.
 `;
 
 /**
  * Message type representing a single message in the conversation history.
  */
-type Msg = { role: 'user' | 'assistant' | 'system'; content: string };
+type Msg = { role: 'system' | 'user' | 'assistant'; content: string };
 
 /**
  * Generic type for tool parameters.
@@ -161,48 +123,47 @@ type Msg = { role: 'user' | 'assistant' | 'system'; content: string };
 type Params = Record<string, unknown>;
 
 /**
- * Log entry type for tool usage.
+ * Tool call interface representing a single step in the plan.
  */
-type ToolLogEntry = { tool: string; params?: Params; result: unknown };
+interface ToolCall { tool: string; params?: Params }
 
 /**
- * Log entry type for completed steps.
+ * Plan JSON interface representing the structure of the plan.
  */
-type StepLogEntry = { step: string; output: string };
+interface PlanJson  { steps: ToolCall[] }
 
 /**
- * Interface for the JSON plan returned by the LLM.
+ * Step log interface representing the execution log of each step.
  */
-interface PlanJson { steps: string[] }
+interface StepLog   { step: ToolCall; output: string }
 
 /**
- * Interface for the result of executing a step.
+ * Maximum number of messages to keep in history.
  */
-interface ExecResult { tool?: string; params?: Params; result?: string; done?: boolean }
+const MAX_HISTORY = 10;
 
 /**
- * Removes hidden context comments from a string.
- * @param s - The input string.
- * @returns The string with hidden context comments removed.
+ * Delay between steps in milliseconds.
  */
-function stripContext(s: string): string {
-    return s.replace(/<!--CONTEXT[\s\S]*?CONTEXT-->/g, '');
-}
+const STEP_DELAY  = 40;  // ms pause for UI
 
 /**
- * Extracts the first balanced JSON object from a string.
- * @param s - The input string.
- * @returns The first JSON object as a string, or null if none found.
+ * Function to strip out context comments from the message content.
+ * This is used to clean up the message before sending it to the LLM.
  */
-function firstObject(s: string): string | null {
+const stripCtx = (s: string) =>
+    s.replace(/<!--CONTEXT[\s\S]*?CONTEXT-->/g, '');
+
+/**
+ * Function to extract the first JSON object from a string.
+ * @param txt
+ */
+function firstJson(txt: string): string | null {
     let depth = 0, start = -1;
-    for (let i = 0; i < s.length; i++) {
-        if (s[i] === '{') {
-            if (depth === 0) start = i;
-            depth++;
-        } else if (s[i] === '}') {
-            depth--;
-            if (depth === 0 && start >= 0) return s.slice(start, i + 1);
+    for (let i = 0; i < txt.length; i++) {
+        if (txt[i] === '{') { if (depth === 0) start = i; depth++; }
+        else if (txt[i] === '}' && --depth === 0) {
+            return txt.slice(start, i + 1);
         }
     }
     return null;
@@ -216,97 +177,74 @@ function firstObject(s: string): string | null {
  */
 async function callLLM(prompt: string, history: Msg[]): Promise<string> {
     const res = await fetch('https://api.perplexity.ai/chat/completions', {
-        method: 'POST',
+        method : 'POST',
         headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${process.env.PERPLEXITY_API_KEY}`,
+            'Authorization' : `Bearer ${process.env.PERPLEXITY_API_KEY}`,
         },
         body: JSON.stringify({
-            model: 'sonar',
+            model : 'sonar',
             stream: false,
-            messages: [{ role: 'system', content: prompt }, ...history],
+            messages: [{ role:'system', content:prompt }, ...history],
         }),
     });
-    if (!res.ok) throw new Error(`LLM ${res.status}: ${await res.text()}`);
-    const j = await res.json();
-    return j.choices[0].message.content as string;
+    const text = await res.text();
+    if (!res.ok) throw new Error(`LLM error ${res.status}: ${text}`);
+    const j = JSON.parse(text);
+    return j.choices[0].message.content;
 }
 
 /**
- * Runs a Canvas tool via a Python bridge.
- * @param tool - The name of the tool to run.
- * @param params - The parameters for the tool.
- * @returns The result of the tool execution.
+ * Streams the LLM's response in chunks.
+ * @param prompt
+ * @param history
  */
-function runTool(tool: string, params: Params = {}): unknown {
-    const raw = execSync('python3 tool_caller.py', {
-        input: JSON.stringify({ tool, params }),
-        encoding: 'utf8',
-        maxBuffer: 5 * 1024 * 1024,
+async function* streamLLM(prompt: string, history: Msg[]): AsyncGenerator<string> {
+    const res = await fetch('https://api.perplexity.ai/chat/completions', {
+        method: 'POST',
+        headers: {
+            'Content-Type':  'application/json',
+            'Accept':        'text/event-stream',
+            'Authorization': `Bearer ${process.env.PERPLEXITY_API_KEY}`,
+        },
+        body: JSON.stringify({
+            model:  'sonar',
+            stream: true,
+            messages: [{ role:'system', content:prompt }, ...history],
+        }),
     });
-    try {
-        return JSON.parse(raw);
-    } catch {
-        return { error: `Invalid JSON from ${tool}`, raw };
+
+    if (!res.ok || !res.body) {
+        throw new Error(`Stream error ${res.status}`);
     }
-}
 
-/**
- * Generates a plan for the given query using the LLM.
- * @param query - The user's query.
- * @param history - The conversation history.
- * @returns The plan as an object containing steps or a direct response.
- */
-async function getPlan(query: string, history: Msg[]): Promise<{ steps?: string[]; direct?: string }> {
-    const cleanHist = history.map(m => ({ role: m.role, content: stripContext(m.content) }));
-    const prompt = PROMPT_PLAN.replace(/{{userQuery}}/g, query);
-    const planTxt = await callLLM(prompt, cleanHist);
+    const reader = res.body.getReader();
+    const dec    = new TextDecoder();
+    let buf = '';
 
-    const objStr = firstObject(planTxt);
-    if (objStr) {
-        try {
-            const obj = JSON.parse(objStr) as PlanJson;
-            if (Array.isArray(obj.steps) && obj.steps.length) {
-                return { steps: obj.steps };
+    while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+
+        // Split on newline
+        const lines = buf.split(/\r?\n/);
+        buf = lines.pop()!;  // Last line may be partial
+
+        for (const line of lines) {
+            // Only handle "data: {...}"
+            if (!line.startsWith('data:')) continue;
+            const payload = line.slice(5).trim();
+            if (payload === '[DONE]') return;
+            try {
+                const j = JSON.parse(payload);
+                const delta = j.choices?.[0]?.delta?.content;
+                if (delta) yield delta;
+            } catch {
+                // Malformed JSON? Let's ignore that ;)
             }
-        } catch { /* ignore */ }
+        }
     }
-    return { direct: stripContext(planTxt).trim() };
-}
-
-/**
- * Executes a single step in the plan, with natural-language fallback.
- * @param args - The arguments for step execution.
- * @returns The result of the step execution.
- */
-async function execStep(args: {
-    i: number;
-    steps: string[];
-    toolsLog: ToolLogEntry[];
-    stepsLog: StepLogEntry[];
-    query: string;
-    history: Msg[];
-}): Promise<ExecResult> {
-    const { i, steps, toolsLog, stepsLog, query, history } = args;
-    const cleanHist = history.map(m => ({ role: m.role, content: stripContext(m.content) }));
-    const prompt = PROMPT_EXECUTE
-        .replace(/{{userQuery}}/g, query)
-        .replace(/{{planJson}}/g, JSON.stringify({ steps }))
-        .replace(/{{currentStep}}/g, String(i))
-        .replace(/{{toolsLog}}/g, JSON.stringify(toolsLog))
-        .replace(/{{stepsLog}}/g, JSON.stringify(stepsLog));
-
-    const raw = await callLLM(prompt, cleanHist);
-
-    const jsonStr = firstObject(raw);
-    if (jsonStr) {
-        try {
-            return JSON.parse(jsonStr) as ExecResult;
-        } catch { /* fall through to fallback */ }
-    }
-
-    // Fallback: the LLM answered in prose, so wrap it and finish
-    return { result: stripContext(raw).trim(), done: true };
 }
 
 /**
@@ -315,68 +253,91 @@ async function execStep(args: {
  * @returns A server-sent event stream response.
  */
 export async function POST(req: NextRequest) {
+    const { messages }: { messages: Msg[] } = await req.json();
+    const latest = messages.at(-1)?.content.trim() || '';
+
+    // Parse system context
+    let systemCtx: Record<string, unknown> = {};
+    try {
+        const raw = messages.find(m => m.role === 'system')?.content;
+        if (raw) systemCtx = JSON.parse(raw);
+    } catch {}
+
+    /**
+     * Runs a tool via a Python bridge.
+     * @param tool - The name of the tool to run.
+     * @param params - The parameters for the tool.
+     * @returns The result of the tool execution.
+     */
+    function runTool(tool: string, params: Params = {}): unknown {
+        if (tool === 'get_courses' && Array.isArray(systemCtx.courses)) {
+            return systemCtx.courses;
+        }
+        const raw = execSync('python3 tool_caller.py', {
+            input    : JSON.stringify({ tool, params }),
+            encoding : 'utf8',
+            maxBuffer: 10 * 1024 * 1024,
+        });
+        try { return JSON.parse(raw); } catch { return raw; }
+    }
+
+    // Prepare history
+    const history = messages
+        .slice(-MAX_HISTORY)
+        .map(m => ({ role: m.role, content: stripCtx(m.content) }));
+
+    /**
+     * Creates a ReadableStream to stream the response back to the client.
+     * @returns A ReadableStream of Uint8Array.
+     */
     const stream = new ReadableStream<Uint8Array>({
         async start(ctrl) {
-            const enc = new TextEncoder();
-            const enqueue = (type: string, data: object) =>
+            const enc  = new TextEncoder();
+            const send = (type: string, data: object) =>
                 ctrl.enqueue(enc.encode(`data: ${JSON.stringify({ type, ...data })}\n\n`));
 
             try {
-                const { messages }: { messages: Msg[] } = await req.json();
-                const last = messages.at(-1);
-                const query = last?.content.trim() || '';
-
-                // 1) Plan or direct answer
-                enqueue('status', { message: 'Planning…' });
-                const planRes = await getPlan(query, messages);
-
-                if (planRes.direct) {
-                    enqueue('summary', { summary: planRes.direct, complete_all: true });
-                    ctrl.enqueue(enc.encode('data: [DONE]\n\n'));
-                    ctrl.close();
-                    return;
-                }
-
-                // 2) JSON plan
-                const steps = planRes.steps!;
-                enqueue('plan', { plan: steps });
-
-                // 3) Execute steps
-                const toolsLog: ToolLogEntry[] = [];
-                const stepsLog: StepLogEntry[] = [];
-                outer: for (let i = 0; i < steps.length; i++) {
-                    enqueue('status', { message: `Step ${i + 1}/${steps.length}` });
-                    const act = await execStep({ i, steps, toolsLog, stepsLog, query, history: messages });
-
-                    if (act.tool) {
-                        const result = runTool(act.tool, act.params ?? {});
-                        toolsLog.push({ tool: act.tool, params: act.params, result });
-                        i--; // retry this step with updated context
-                        continue;
-                    }
-
-                    stepsLog.push({ step: steps[i], output: act.result ?? '' });
-                    enqueue('step', { index: i, step: steps[i], output: act.result ?? '' });
-                    if (act.done || i === steps.length - 1) break outer;
-                }
-
-                // 4) Summary
-                enqueue('status', { message: 'Finalising…' });
-                const summary = await callLLM(
-                    PROMPT_SUMMARY
-                        .replace(/{{userQuery}}/g, query)
-                        .replace(/{{stepsLog}}/g, JSON.stringify(stepsLog, null, 2)),
-                    messages
+                // 1) Plan
+                send('status', { message: 'Planning…' });
+                const planRaw = await callLLM(
+                    PROMPT_PLAN.replace(/{{userQuery}}/g, latest),
+                    history
                 );
-                const hidden = `<!--CONTEXT\n${JSON.stringify({ stepsLog, toolsLog })}\nCONTEXT-->`;
-                enqueue('summary', { summary: summary + '\n\n' + hidden, complete_all: true });
+                const pj = firstJson(planRaw);
+                if (!pj) {
+                    send('summary', { summary: stripCtx(planRaw), complete_all: true });
+                    ctrl.close(); return;
+                }
+                const { steps } = JSON.parse(pj) as PlanJson;
+                send('plan', { plan: steps });
 
-                ctrl.enqueue(enc.encode('data: [DONE]\n\n'));
+                // 2) Execute
+                const log: StepLog[] = [];
+                for (let i = 0; i < steps.length; i++) {
+                    send('status', { message: `Step ${i+1}/${steps.length}` });
+                    const out = runTool(steps[i].tool, steps[i].params ?? {});
+                    log.push({ step: steps[i], output: JSON.stringify(out) });
+                    send('step', { index: i, step: steps[i], output: out });
+                    await new Promise(r => setTimeout(r, STEP_DELAY));
+                }
+
+                // 3) Stream Summary
+                send('status', { message: 'Finalising…' });
+                const summaryPrompt = PROMPT_SUMMARY
+                    .replace(/{{userQuery}}/g, latest)
+                    .replace(/{{stepsLog}}/g, JSON.stringify(log, null, 2));
+
+                let full = '';
+                for await (const delta of streamLLM(summaryPrompt, history)) {
+                    full += delta;
+                    send('summary_chunk', { delta });
+                }
+                send('summary', { summary: full, complete_all: true });
                 ctrl.close();
-            } catch (e: unknown) {
-                const msg = e instanceof Error ? e.message : String(e);
-                enqueue('summary', { summary: `⚠️ ${msg}`, complete_all: true, error: true });
-                ctrl.enqueue(enc.encode('data: [DONE]\n\n'));
+
+            } catch (err: unknown) {
+                const msg = err instanceof Error ? err.message : String(err);
+                send('summary', { summary: `⚠️ ${msg}`, error:true, complete_all:true });
                 ctrl.close();
             }
         }
@@ -384,9 +345,9 @@ export async function POST(req: NextRequest) {
 
     return new NextResponse(stream, {
         headers: {
-            'Content-Type': 'text/event-stream',
+            'Content-Type' : 'text/event-stream',
             'Cache-Control': 'no-cache',
-            Connection: 'keep-alive',
+            Connection      : 'keep-alive',
         },
     });
 }
