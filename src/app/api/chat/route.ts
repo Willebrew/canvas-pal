@@ -148,6 +148,17 @@ const MAX_HISTORY = 10;
 const STEP_DELAY  = 40;  // ms pause for UI
 
 /**
+ * Groq API endpoint for chat completions.
+ */
+const GROQ_API_ENDPOINT = 'https://api.groq.com/openai/v1/chat/completions';
+
+/**
+ * Model ID for Llama 4 Scout on Groq.
+ * Note: Verify this ID is available for your API key. Fallbacks might include 'llama3-70b-8192' or 'llama-3.1-8b-instant'.
+ */
+const GROQ_MODEL_ID = 'meta-llama/llama-4-scout-17b-16e-instruct';
+
+/**
  * Function to strip out context comments from the message content.
  * This is used to clean up the message before sending it to the LLM.
  */
@@ -176,22 +187,44 @@ function firstJson(txt: string): string | null {
  * @returns The LLM's response as a string.
  */
 async function callLLM(prompt: string, history: Msg[]): Promise<string> {
-    const res = await fetch('https://api.perplexity.ai/chat/completions', {
+    const apiKey = process.env.LLM_API_KEY; // Using the same env variable name as requested
+    if (!apiKey) {
+        throw new Error('API key for LLM provider is not configured.');
+    }
+
+    const res = await fetch(GROQ_API_ENDPOINT, {
         method : 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'Authorization' : `Bearer ${process.env.PERPLEXITY_API_KEY}`,
+            'Authorization' : `Bearer ${apiKey}`, // Use the key here
         },
         body: JSON.stringify({
-            model : 'sonar',
+            model : GROQ_MODEL_ID,
             stream: false,
             messages: [{ role:'system', content:prompt }, ...history],
+            // Optional: Add other parameters like temperature, max_tokens if needed
+            // temperature: 0.7,
+            // max_tokens: 1024,
         }),
     });
+
     const text = await res.text();
-    if (!res.ok) throw new Error(`LLM error ${res.status}: ${text}`);
-    const j = JSON.parse(text);
-    return j.choices[0].message.content;
+    if (!res.ok) {
+        console.error("Groq API Error Response:", text);
+        throw new Error(`Groq API error ${res.status}: ${text}`);
+    }
+
+    try {
+        const j = JSON.parse(text);
+        if (!j.choices || j.choices.length === 0 || !j.choices[0].message || !j.choices[0].message.content) {
+            console.error("Unexpected Groq API response structure:", j);
+            throw new Error('Invalid response structure from Groq API');
+        }
+        return j.choices[0].message.content;
+    } catch (e) {
+        console.error("Failed to parse Groq API response:", text);
+        throw new Error(`Failed to parse response from Groq API: ${e instanceof Error ? e.message : String(e)}`);
+    }
 }
 
 /**
@@ -200,22 +233,32 @@ async function callLLM(prompt: string, history: Msg[]): Promise<string> {
  * @param history
  */
 async function* streamLLM(prompt: string, history: Msg[]): AsyncGenerator<string> {
-    const res = await fetch('https://api.perplexity.ai/chat/completions', {
+    const apiKey = process.env.LLM_API_KEY; // Using the same env variable name as requested
+    if (!apiKey) {
+        throw new Error('API key for LLM provider is not configured.');
+    }
+
+    const res = await fetch(GROQ_API_ENDPOINT, {
         method: 'POST',
         headers: {
             'Content-Type':  'application/json',
-            'Accept':        'text/event-stream',
-            'Authorization': `Bearer ${process.env.PERPLEXITY_API_KEY}`,
+            'Accept':        'text/event-stream', // Important for streaming
+            'Authorization': `Bearer ${apiKey}`, // Use the key here
         },
         body: JSON.stringify({
-            model:  'sonar',
-            stream: true,
+            model:  GROQ_MODEL_ID,
+            stream: true, // Enable streaming
             messages: [{ role:'system', content:prompt }, ...history],
+            // Optional: Add other parameters like temperature, max_tokens if needed
+            // temperature: 0.7,
+            // max_tokens: 1024,
         }),
     });
 
     if (!res.ok || !res.body) {
-        throw new Error(`Stream error ${res.status}`);
+        const errorText = await res.text().catch(() => 'Could not read error response body');
+        console.error("Groq API Stream Error Response:", errorText);
+        throw new Error(`Groq API stream error ${res.status}: ${errorText}`);
     }
 
     const reader = res.body.getReader();
@@ -227,21 +270,41 @@ async function* streamLLM(prompt: string, history: Msg[]): AsyncGenerator<string
         if (done) break;
         buf += dec.decode(value, { stream: true });
 
-        // Split on newline
+        // Process buffer line by line
         const lines = buf.split(/\r?\n/);
-        buf = lines.pop()!;  // Last line may be partial
+        buf = lines.pop()!; // Keep the potentially partial last line in the buffer
 
         for (const line of lines) {
-            // Only handle "data: {...}"
-            if (!line.startsWith('data:')) continue;
-            const payload = line.slice(5).trim();
-            if (payload === '[DONE]') return;
+            if (line.startsWith('data: ')) {
+                const payload = line.slice(6).trim(); // Groq uses 'data: ' (with space)
+                if (payload === '[DONE]') {
+                    return; // Stream finished
+                }
+                try {
+                    const j = JSON.parse(payload);
+                    const delta = j.choices?.[0]?.delta?.content;
+                    if (delta) {
+                        yield delta; // Yield the content chunk
+                    }
+                } catch (e) {
+                    console.warn(`Skipping malformed JSON chunk in stream: ${payload}`, e);
+                    // Malformed JSON? Let's ignore that chunk and continue.
+                }
+            }
+        }
+    }
+    // Process any remaining buffer content after the loop finishes
+    if (buf.startsWith('data: ')) {
+        const payload = buf.slice(6).trim();
+        if (payload !== '[DONE]') {
             try {
                 const j = JSON.parse(payload);
                 const delta = j.choices?.[0]?.delta?.content;
-                if (delta) yield delta;
-            } catch {
-                // Malformed JSON? Let's ignore that ;)
+                if (delta) {
+                    yield delta;
+                }
+            } catch (e) {
+                console.warn(`Skipping malformed JSON chunk at stream end: ${payload}`, e);
             }
         }
     }
