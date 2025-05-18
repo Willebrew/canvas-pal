@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from canvasapi import Canvas
 from html.parser import HTMLParser
 from html import unescape
+from http.server import BaseHTTPRequestHandler   # Vercel provides this
 
 # Load environment variables
 load_dotenv()
@@ -36,6 +37,18 @@ def debug_print(message):
    """
     if DEBUG:
         print(f"DEBUG: {message}", file=sys.stderr)
+
+
+def handler(request: BaseHTTPRequestHandler) -> Dict[str, Any]:
+    """Vercel entry-point – reads JSON body, returns JSON body."""
+    length = int(request.headers.get("content-length", 0))
+    body   = request.rfile.read(length) if length else b"{}"
+    result = handle_tool_call(json.loads(body or "{}"))
+    return {
+        "statusCode": 200,
+        "headers":    {"Content-Type": "application/json"},
+        "body":       json.dumps(result)
+    }
 
 # =============== HELPER FUNCTIONS ===============
 

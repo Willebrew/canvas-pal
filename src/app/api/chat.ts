@@ -1,18 +1,15 @@
+// src/app/api/chat/route.ts
+
+import { NextRequest, NextResponse } from 'next/server';
+import { runTool } from '@/lib/runTool';
+
 /**
  * CanvasPal route
  *
  * This module defines the API route for handling chat requests in the CanvasPal application.
  * It integrates with an LLM (Large Language Model) to process user queries, generate plans,
  * execute steps using Canvas tools, and provide summaries.
- *
- * Key Features:
- * - Planning is optional: If the LLM returns plain text instead of JSON for a plan, it is returned immediately.
- * - Execution steps accept natural-language replies: If the LLM does not emit JSON for a step, its raw prose is wrapped as {"result": "...", done: true}.
- * - Eliminates errors related to unreadable execution step JSON.
  */
-
-import { NextRequest, NextResponse } from 'next/server';
-import { execSync }     from 'child_process';
 
 export const runtime = 'nodejs';
 
@@ -150,26 +147,19 @@ const MAX_HISTORY = 10;
 const STEP_DELAY  = 40;  // ms pause for UI
 
 /**
- * Groq API endpoint for chat completions.
+ * Groq API endpoint and model ID.
  */
 const GROQ_API_ENDPOINT = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_MODEL_ID     = 'meta-llama/llama-4-scout-17b-16e-instruct';
 
 /**
- * Model ID for Llama 4 Scout on Groq.
- * Note: Verify this ID is available for your API key. Fallbacks might include 'llama3-70b-8192' or 'llama-3.1-8b-instant'.
- */
-const GROQ_MODEL_ID = 'meta-llama/llama-4-scout-17b-16e-instruct';
-
-/**
- * Function to strip out context comments from the message content.
- * This is used to clean up the message before sending it to the LLM.
+ * Strip out context comments from the message content.
  */
 const stripCtx = (s: string) =>
     s.replace(/<!--CONTEXT[\s\S]*?CONTEXT-->/g, '');
 
 /**
- * Function to extract the first JSON object from a string.
- * @param txt
+ * Extract the first JSON object from a string.
  */
 function firstJson(txt: string): string | null {
     let depth = 0, start = -1;
@@ -183,84 +173,67 @@ function firstJson(txt: string): string | null {
 }
 
 /**
- * Calls the LLM with a given prompt and conversation history.
- * @param prompt - The prompt to send to the LLM.
- * @param history - The conversation history.
- * @returns The LLM's response as a string.
+ * Call the LLM with a given prompt and history (non-streaming).
  */
 async function callLLM(prompt: string, history: Msg[]): Promise<string> {
-    const apiKey = process.env.LLM_API_KEY; // Using the same env variable name as requested
-    if (!apiKey) {
-        throw new Error('API key for LLM provider is not configured.');
-    }
-
-    const res = await fetch(GROQ_API_ENDPOINT, {
-        method : 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization' : `Bearer ${apiKey}`, // Use the key here
-        },
-        body: JSON.stringify({
-            model : GROQ_MODEL_ID,
-            stream: false,
-            messages: [{ role:'system', content:prompt }, ...history],
-            // Optional: Add other parameters like temperature, max_tokens if needed
-            // temperature: 0.7,
-            // max_tokens: 1024,
-        }),
-    });
-
-    const text = await res.text();
-    if (!res.ok) {
-        console.error("Groq API Error Response:", text);
-        throw new Error(`Groq API error ${res.status}: ${text}`);
-    }
-
-    try {
-        const j = JSON.parse(text);
-        if (!j.choices || j.choices.length === 0 || !j.choices[0].message || !j.choices[0].message.content) {
-            console.error("Unexpected Groq API response structure:", j);
-            throw new Error('Invalid response structure from Groq API');
-        }
-        return j.choices[0].message.content;
-    } catch (e) {
-        console.error("Failed to parse Groq API response:", text);
-        throw new Error(`Failed to parse response from Groq API: ${e instanceof Error ? e.message : String(e)}`);
-    }
-}
-
-/**
- * Streams the LLM's response in chunks.
- * @param prompt
- * @param history
- */
-async function* streamLLM(prompt: string, history: Msg[]): AsyncGenerator<string> {
-    const apiKey = process.env.LLM_API_KEY; // Using the same env variable name as requested
-    if (!apiKey) {
-        throw new Error('API key for LLM provider is not configured.');
-    }
+    const apiKey = process.env.LLM_API_KEY;
+    if (!apiKey) throw new Error('LLM_API_KEY is not configured.');
 
     const res = await fetch(GROQ_API_ENDPOINT, {
         method: 'POST',
         headers: {
             'Content-Type':  'application/json',
-            'Accept':        'text/event-stream', // Important for streaming
-            'Authorization': `Bearer ${apiKey}`, // Use the key here
+            'Authorization': `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-            model:  GROQ_MODEL_ID,
-            stream: true, // Enable streaming
-            messages: [{ role:'system', content:prompt }, ...history],
-            // Optional: Add other parameters like temperature, max_tokens if needed
-            // temperature: 0.7,
-            // max_tokens: 1024,
+            model:   GROQ_MODEL_ID,
+            stream:  false,
+            messages:[{ role:'system', content:prompt }, ...history],
+        }),
+    });
+
+    const text = await res.text();
+    if (!res.ok) {
+        console.error('Groq API Error:', text);
+        throw new Error(`Groq API error ${res.status}: ${text}`);
+    }
+
+    let j;
+    try { j = JSON.parse(text); }
+    catch (e) { throw new Error(`Invalid JSON from Groq: ${e}`); }
+
+    const content = j.choices?.[0]?.message?.content;
+    if (!content) {
+        console.error('Unexpected Groq response:', j);
+        throw new Error('Invalid response structure from Groq API');
+    }
+    return content;
+}
+
+/**
+ * Stream the LLM's response in chunks.
+ */
+async function* streamLLM(prompt: string, history: Msg[]): AsyncGenerator<string> {
+    const apiKey = process.env.LLM_API_KEY;
+    if (!apiKey) throw new Error('LLM_API_KEY is not configured.');
+
+    const res = await fetch(GROQ_API_ENDPOINT, {
+        method: 'POST',
+        headers: {
+            'Content-Type':  'application/json',
+            'Accept':        'text/event-stream',
+            'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+            model:   GROQ_MODEL_ID,
+            stream:  true,
+            messages:[{ role:'system', content:prompt }, ...history],
         }),
     });
 
     if (!res.ok || !res.body) {
-        const errorText = await res.text().catch(() => 'Could not read error response body');
-        console.error("Groq API Stream Error Response:", errorText);
-        throw new Error(`Groq API stream error ${res.status}: ${errorText}`);
+        const err = await res.text().catch(() => 'No body');
+        throw new Error(`Groq API stream error ${res.status}: ${err}`);
     }
 
     const reader = res.body.getReader();
@@ -272,41 +245,33 @@ async function* streamLLM(prompt: string, history: Msg[]): AsyncGenerator<string
         if (done) break;
         buf += dec.decode(value, { stream: true });
 
-        // Process buffer line by line
         const lines = buf.split(/\r?\n/);
-        buf = lines.pop()!; // Keep the potentially partial last line in the buffer
+        buf = lines.pop()!;
 
         for (const line of lines) {
-            if (line.startsWith('data: ')) {
-                const payload = line.slice(6).trim(); // Groq uses 'data: ' (with space)
-                if (payload === '[DONE]') {
-                    return; // Stream finished
-                }
-                try {
-                    const j = JSON.parse(payload);
-                    const delta = j.choices?.[0]?.delta?.content;
-                    if (delta) {
-                        yield delta; // Yield the content chunk
-                    }
-                } catch (e) {
-                    console.warn(`Skipping malformed JSON chunk in stream: ${payload}`, e);
-                    // Malformed JSON? Let's ignore that chunk and continue.
-                }
+            if (!line.startsWith('data: ')) continue;
+            const payload = line.slice(6).trim();
+            if (payload === '[DONE]') return;
+            try {
+                const j = JSON.parse(payload);
+                const delta = j.choices?.[0]?.delta?.content;
+                if (delta) yield delta;
+            } catch {
+                // ignore malformed chunks
             }
         }
     }
-    // Process any remaining buffer content after the loop finishes
+
+    // Flush any trailing buffer
     if (buf.startsWith('data: ')) {
         const payload = buf.slice(6).trim();
         if (payload !== '[DONE]') {
             try {
                 const j = JSON.parse(payload);
                 const delta = j.choices?.[0]?.delta?.content;
-                if (delta) {
-                    yield delta;
-                }
-            } catch (e) {
-                console.warn(`Skipping malformed JSON chunk at stream end: ${payload}`, e);
+                if (delta) yield delta;
+            } catch {
+                // ignore
             }
         }
     }
@@ -314,47 +279,17 @@ async function* streamLLM(prompt: string, history: Msg[]): AsyncGenerator<string
 
 /**
  * Handles POST requests to the chat API route.
- * @param req - The incoming request.
- * @returns A server-sent event stream response.
  */
 export async function POST(req: NextRequest) {
     const { messages }: { messages: Msg[] } = await req.json();
     const latest = messages.at(-1)?.content.trim() || '';
 
-    // Parse system context
-    let systemCtx: Record<string, unknown> = {};
-    try {
-        const raw = messages.find(m => m.role === 'system')?.content;
-        if (raw) systemCtx = JSON.parse(raw);
-    } catch {}
-
-    /**
-     * Runs a tool via a Python bridge.
-     * @param tool - The name of the tool to run.
-     * @param params - The parameters for the tool.
-     * @returns The result of the tool execution.
-     */
-    function runTool(tool: string, params: Params = {}): unknown {
-        if (tool === 'get_courses' && Array.isArray(systemCtx.courses)) {
-            return systemCtx.courses;
-        }
-        const raw = execSync('python3 tool_caller.py', {
-            input    : JSON.stringify({ tool, params }),
-            encoding : 'utf8',
-            maxBuffer: 10 * 1024 * 1024,
-        });
-        try { return JSON.parse(raw); } catch { return raw; }
-    }
-
-    // Prepare history
+    // Prepare history for the LLM (strip out any <!--CONTEXT--> wrappers)
     const history = messages
         .slice(-MAX_HISTORY)
         .map(m => ({ role: m.role, content: stripCtx(m.content) }));
 
-    /**
-     * Creates a ReadableStream to stream the response back to the client.
-     * @returns A ReadableStream of Uint8Array.
-     */
+    // Build a ReadableStream to send SSE back to the client
     const stream = new ReadableStream<Uint8Array>({
         async start(ctrl) {
             const enc  = new TextEncoder();
@@ -362,31 +297,34 @@ export async function POST(req: NextRequest) {
                 ctrl.enqueue(enc.encode(`data: ${JSON.stringify({ type, ...data })}\n\n`));
 
             try {
-                // 1) Plan
+                // 1) PLAN
                 send('status', { message: 'Planning…' });
                 const planRaw = await callLLM(
                     PROMPT_PLAN.replace(/{{userQuery}}/g, latest),
                     history
                 );
+
                 const pj = firstJson(planRaw);
                 if (!pj) {
+                    // Not valid JSON ⇒ return it as a plain summary
                     send('summary', { summary: stripCtx(planRaw), complete_all: true });
-                    ctrl.close(); return;
+                    return ctrl.close();
                 }
+
                 const { steps } = JSON.parse(pj) as PlanJson;
                 send('plan', { plan: steps });
 
-                // 2) Execute
+                // 2) EXECUTION
                 const log: StepLog[] = [];
                 for (let i = 0; i < steps.length; i++) {
-                    send('status', { message: `Step ${i+1}/${steps.length}` });
-                    const out = runTool(steps[i].tool, steps[i].params ?? {});
+                    send('status', { message: `Step ${i + 1}/${steps.length}` });
+                    const out = await runTool(steps[i].tool, steps[i].params ?? {});
                     log.push({ step: steps[i], output: JSON.stringify(out) });
                     send('step', { index: i, step: steps[i], output: out });
                     await new Promise(r => setTimeout(r, STEP_DELAY));
                 }
 
-                // 3) Stream Summary
+                // 3) SUMMARY
                 send('status', { message: 'Finalising…' });
                 const summaryPrompt = PROMPT_SUMMARY
                     .replace(/{{userQuery}}/g, latest)
@@ -402,7 +340,7 @@ export async function POST(req: NextRequest) {
 
             } catch (err: unknown) {
                 const msg = err instanceof Error ? err.message : String(err);
-                send('summary', { summary: `⚠️ ${msg}`, error:true, complete_all:true });
+                send('summary', { summary: `⚠️ ${msg}`, error: true, complete_all: true });
                 ctrl.close();
             }
         }
@@ -410,9 +348,9 @@ export async function POST(req: NextRequest) {
 
     return new NextResponse(stream, {
         headers: {
-            'Content-Type' : 'text/event-stream',
+            'Content-Type':  'text/event-stream',
             'Cache-Control': 'no-cache',
-            Connection      : 'keep-alive',
-        },
+            Connection:      'keep-alive',
+        }
     });
 }
