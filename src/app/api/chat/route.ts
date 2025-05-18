@@ -109,6 +109,8 @@ Please do not write footnotes
 
 Do not write citations or references to external sources. Eg. [^1^], [^1] or [1].
 
+When discussing an assignment provide a link to the assignment in Canvas.
+
 Now write the summary obeying these rules.
 `;
 
