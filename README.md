@@ -17,29 +17,30 @@ CanvasPal is a Next.js + TypeScript application built for a hackathon that trans
 
 ## 📋 Table of Contents
 
-1. [Features](#✨-features)  
-2. [Architecture Overview](#🏛️-architecture-overview)  
-3. [Tech Stack](#🛠-tech-stack)  
-4. [Getting Started](#🚀-getting-started)  
-   - [Prerequisites](#prerequisites)  
-   - [Installation](#installation)  
-   - [Environment Variables](#environment-variables)  
-   - [Running Locally](#running-locally)  
-   - [Deployment](#deployment)  
-5. [Project Structure](#📁-project-structure)  
-6. [How It Works](#🔍-how-it-works)  
-7. [Contributing](#🤝-contributing)  
-8. [License](#📄-license)  
+1. [Features](#features)
+2. [Architecture Overview](#architecture-overview)
+3. [Tech Stack](#tech-stack)
+4. [Getting Started](#getting-started)
+   - [Prerequisites](#prerequisites)
+   - [Installation](#installation)
+   - [Environment Variables](#environment-variables)
+   - [Running Locally](#running-locally)
+   - [Deployment](#deployment)
+5. [Project Structure](#project-structure)
+6. [How It Works](#how-it-works)
+7. [Contributing](#contributing)
+8. [License](#license)
 
 ---
 
+<a id="features"></a>
 ## ✨ Features
 
 - **Natural-Language Planning**  
   Auto-generate step-by-step plans (e.g. “List my unsubmitted assignments in Systems I”) via an LLM prompt.
 
 - **Tool-Driven Execution**  
-  Execute Canvas API calls through a Python bridge (`tool_caller.py`), retrying until all IDs are discovered.
+  Execute Canvas API calls through a Python bridge (`api/tool.py`), retrying until all IDs are discovered.
 
 - **Live Streaming UI**  
   SSE (Server-Sent Events) in `route.ts` streams plan, status, steps, and final summary to the client.
@@ -51,10 +52,11 @@ CanvasPal is a Next.js + TypeScript application built for a hackathon that trans
   Stores conversation in `sessionStorage`, auto-scrolls, and supports cancellation.
 
 - **Extensible**  
-  Easily add new Canvas tools by updating the `TOOLS` mapping in `tool_caller.py`.
+  Easily add new Canvas tools by updating the `TOOLS` mapping in `api/tool.py`.
 
 ---
 
+<a id="architecture-overview"></a>
 ## 🏛️ Architecture Overview
 
 ```
@@ -64,12 +66,13 @@ User Browser
 └─ API Route (POST /api/chat)
 ├─ getPlan() → LLM (Perplexity)
 ├─ execStep() → LLM → { tool? | result }
-├─ runTool() → Python tool_caller.py → Canvas API
+├─ runTool() → Python api/tool.py → Canvas API
 └─ Summary → LLM
 ```
 ![CanvasPal Pipeline](CanvasPal_Pipeline.png)
 ---
 
+<a id="tech-stack"></a>
 ## 🛠 Tech Stack
 
 | Layer           | Technology                          |
@@ -83,8 +86,10 @@ User Browser
 
 ---
 
+<a id="getting-started"></a>
 ## 🚀 Getting Started
 
+<a id="prerequisites"></a>
 ### Prerequisites
 
 - Node.js 20+  
@@ -92,6 +97,7 @@ User Browser
 - Vercel account (for deployment)  
 - Canvas API credentials  
 
+<a id="installation"></a>
 ### Installation
 
 1. **Clone the repo**  
@@ -112,6 +118,7 @@ User Browser
    pip install -r requirements.txt
    ```
 
+<a id="environment-variables"></a>
 ### Environment Variables
 
 Create a `.env.local` file in the project root:
@@ -128,6 +135,7 @@ CANVAS_API_KEY=your_canvas_key
 DEBUG=true
 ```
 
+<a id="running-locally"></a>
 ### Running Locally
 
 ```bash
@@ -135,11 +143,12 @@ DEBUG=true
 npm run dev
 
 # In a separate shell, run the Python bridge (optional)
-.venv/bin/python tool_caller.py
+.venv/bin/python api/tool.py
 ```
 
 Visit <http://localhost:3000> to try it out.
 
+<a id="deployment"></a>
 ### Deployment
 
 1. Push to GitHub.
@@ -149,6 +158,23 @@ Visit <http://localhost:3000> to try it out.
 
 ---
 
+<a id="project-structure"></a>
+## 📁 Project Structure
+
+```
+canvas-pal/
+├── api/                # Serverless Canvas API tooling (Python)
+├── public/             # Static assets served by Next.js
+├── src/                # App Router routes, components, and styles
+├── requirements.txt    # Python dependencies for the Canvas bridge
+├── package.json        # Node.js dependencies and scripts
+├── LICENSE             # MIT license for CanvasPal
+└── README.md           # Project overview and setup guide
+```
+
+---
+
+<a id="how-it-works"></a>
 ## 🔍 How It Works
 
 1. **Client** sends chat history + user query to `/api/chat`.
@@ -157,10 +183,11 @@ Visit <http://localhost:3000> to try it out.
     - **status**: current action.
     - **step**: each completed step.
     - **summary**: final conversational reply.
-3. **Execution** of Canvas API calls happens via the Python bridge (`tool_caller.py`).
+3. **Execution** of Canvas API calls happens via the Python bridge (`api/tool.py`).
 
 ---
 
+<a id="contributing"></a>
 ## 🤝 Contributing
 
 1. Fork & create a branch:
@@ -170,6 +197,13 @@ Visit <http://localhost:3000> to try it out.
 2. Implement your feature or fix.
 3. Add tests/documentation if needed.
 4. Open a pull request against `main`.
+
+---
+
+<a id="license"></a>
+## 📄 License
+
+CanvasPal is released under the [MIT License](LICENSE). Review the license for details on permissions, conditions, and limitations.
 
 ---
 
