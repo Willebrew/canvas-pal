@@ -376,7 +376,8 @@ export default function HomePage() {
 
     /* ---------------- UI ---------------- */
     return (
-        <motion.div className="flex flex-col h-screen bg-background text-foreground" layout>
+        <>
+            <motion.div className="flex flex-col h-screen bg-background text-foreground" layout>
             <ChatHeader
                 onNewChatAction={newChat}
                 onHistoryToggleAction={() => setHistoryOpen(o => !o)}
@@ -582,7 +583,7 @@ export default function HomePage() {
                 </motion.div>
             </motion.div>
         </motion.div>
-            {credentialsOpen && (
+        {credentialsOpen && (
                 <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 px-4">
                     <div className="w-full max-w-md rounded-2xl border border-base bg-background p-6 shadow-xl">
                         <h2 className="text-lg font-semibold mb-2">Canvas credentials</h2>
@@ -638,6 +639,6 @@ export default function HomePage() {
                     </div>
                 </div>
             )}
-        </motion.div>
+        </>
     );
 }
