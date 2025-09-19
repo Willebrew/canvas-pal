@@ -2,18 +2,20 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Sun, Moon, Plus, List } from 'lucide-react';
+import { Sun, Moon, Plus, List, KeyRound } from 'lucide-react';
 
 interface ChatHeaderProps {
     onNewChatAction:       () => void;
     onHistoryToggleAction: () => void;
     historyOpen:           boolean;
+    onCredentialsAction:   () => void;
 }
 
 export default function ChatHeader({
                                        onNewChatAction,
                                        onHistoryToggleAction,
                                        historyOpen,
+                                       onCredentialsAction,
                                    }: ChatHeaderProps) {
     const [theme, setTheme] = useState<'light' | 'dark'>('dark');
 
@@ -60,6 +62,13 @@ export default function ChatHeader({
 
             {/* Right: theme toggle, user circle */}
             <div className="flex items-center gap-3">
+                <button
+                    onClick={onCredentialsAction}
+                    className="rounded-full p-2 transition hover:bg-border"
+                    aria-label="Configure Canvas credentials"
+                >
+                    <KeyRound className="h-5 w-5" />
+                </button>
                 <button
                     onClick={toggleTheme}
                     className="rounded-full p-2 transition hover:bg-border"

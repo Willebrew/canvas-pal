@@ -7,11 +7,12 @@ import sys
 import os
 import re
 import requests
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
+from typing import Any, Dict, Optional
 from dotenv import load_dotenv
 from canvasapi import Canvas
-from html.parser import HTMLParser
 from html import unescape
 from http.server import BaseHTTPRequestHandler   # Vercel provides this
 
@@ -22,11 +23,17 @@ load_dotenv()
 API_URL = os.getenv("CANVAS_API_URL")
 API_KEY = os.getenv("CANVAS_API_KEY")
 
-# Initialize Canvas API client
-canvas = Canvas(API_URL, API_KEY)
-
 # Debug mode
 DEBUG = os.getenv("DEBUG", "False").lower() in ["true", "1", "yes"]
+
+
+@dataclass
+class CanvasToolContext:
+    """Holds request-scoped Canvas session information."""
+
+    api_url: str
+    api_key: str
+    canvas: Canvas
 
 def debug_print(message):
     """
@@ -37,6 +44,31 @@ def debug_print(message):
    """
     if DEBUG:
         print(f"DEBUG: {message}", file=sys.stderr)
+
+
+def normalize_canvas_url(raw_url: str) -> str:
+    """Remove trailing slashes and duplicate /api/v1 segments from a Canvas URL."""
+
+    cleaned = raw_url.strip()
+    if cleaned.endswith('/'):
+        cleaned = cleaned[:-1]
+    if cleaned.lower().endswith('/api/v1'):
+        cleaned = cleaned[:-len('/api/v1')]
+    return cleaned
+
+
+def build_context(canvas_url: Optional[str], canvas_api_key: Optional[str]) -> CanvasToolContext:
+    """Create a request-scoped CanvasToolContext using provided or default credentials."""
+
+    url = canvas_url or API_URL
+    key = canvas_api_key or API_KEY
+
+    if not url or not key:
+        raise ValueError("Canvas credentials are required.")
+
+    normalized = normalize_canvas_url(url)
+    debug_print(f"Preparing Canvas context for host {normalized}")
+    return CanvasToolContext(api_url=normalized, api_key=key, canvas=Canvas(normalized, key))
 
 
 def handler(request: BaseHTTPRequestHandler) -> Dict[str, Any]:
@@ -110,7 +142,7 @@ def determine_letter_grade(percentage):
 
 # =============== TOOL FUNCTIONS ===============
 
-def get_courses():
+def get_courses(ctx: CanvasToolContext):
     """
     List all courses the user is enrolled in.
 
@@ -119,7 +151,7 @@ def get_courses():
     """
     debug_print("Running get_courses()")
     try:
-        user = canvas.get_current_user()
+        user = ctx.canvas.get_current_user()
         courses = user.get_favorite_courses()
         result = [{"id": course.id, "name": course.name} for course in courses]
         debug_print(f"Found {len(result)} courses")
@@ -128,7 +160,7 @@ def get_courses():
         debug_print(f"Error in get_courses: {str(e)}")
         return {"error": str(e)}
 
-def get_all_courses():
+def get_all_courses(ctx: CanvasToolContext):
     """
     List all active courses the user is enrolled in (includes non-favorites).
 
@@ -137,7 +169,7 @@ def get_all_courses():
     """
     debug_print("Running get_all_courses()")
     try:
-        user = canvas.get_current_user()
+        user = ctx.canvas.get_current_user()
         courses = user.get_courses(enrollment_state=['active'])
         result = [{"id": course.id, "name": course.name, "code": getattr(course, 'course_code', 'N/A')}
                   for course in courses]
@@ -147,7 +179,7 @@ def get_all_courses():
         debug_print(f"Error in get_all_courses: {str(e)}")
         return {"error": str(e)}
 
-def get_assignments(course_id):
+def get_assignments(ctx: CanvasToolContext, course_id):
     """
     List all assignments for a course.
 
@@ -159,7 +191,7 @@ def get_assignments(course_id):
     """
     debug_print(f"Running get_assignments(course_id={course_id})")
     try:
-        course = canvas.get_course(course_id)
+        course = ctx.canvas.get_course(course_id)
         assignments = course.get_assignments()
         result = [{"id": assignment.id,
                    "name": assignment.name,
@@ -173,7 +205,7 @@ def get_assignments(course_id):
         debug_print(f"Error in get_assignments: {str(e)}")
         return {"error": str(e)}
 
-def get_assignment_details(course_id, assignment_id):
+def get_assignment_details(ctx: CanvasToolContext, course_id, assignment_id):
     """
     Get details about a specific assignment.
 
@@ -192,7 +224,7 @@ def get_assignment_details(course_id, assignment_id):
     """
     debug_print(f"Running get_assignment_details(course_id={course_id}, assignment_id={assignment_id})")
     try:
-        course = canvas.get_course(course_id)
+        course = ctx.canvas.get_course(course_id)
         assignment = course.get_assignment(assignment_id)
 
         # Get raw description
@@ -221,7 +253,7 @@ def get_assignment_details(course_id, assignment_id):
         debug_print(f"Error in get_assignment_details: {str(e)}")
         return {"error": str(e)}
 
-def get_announcements(course_id):
+def get_announcements(ctx: CanvasToolContext, course_id):
     """
     Get recent announcements for a course.
 
@@ -237,7 +269,7 @@ def get_announcements(course_id):
     """
     debug_print(f"Running get_announcements(course_id={course_id})")
     try:
-        course = canvas.get_course(course_id)
+        course = ctx.canvas.get_course(course_id)
         announcements = course.get_discussion_topics(only_announcements=True)
         result = []
         for a in announcements:
@@ -255,7 +287,7 @@ def get_announcements(course_id):
         debug_print(f"Error in get_announcements: {str(e)}")
         return {"error": str(e)}
 
-def get_submission(course_id, assignment_id):
+def get_submission(ctx: CanvasToolContext, course_id, assignment_id):
     """
     Get the submission status and grade for an assignment.
 
@@ -274,9 +306,9 @@ def get_submission(course_id, assignment_id):
     """
     debug_print(f"Running get_submission(course_id={course_id}, assignment_id={assignment_id})")
     try:
-        course = canvas.get_course(course_id)
+        course = ctx.canvas.get_course(course_id)
         assignment = course.get_assignment(assignment_id)
-        user = canvas.get_current_user()
+        user = ctx.canvas.get_current_user()
         submission = assignment.get_submission(user.id)
         result = {
             "id": submission.id,
@@ -292,7 +324,7 @@ def get_submission(course_id, assignment_id):
         debug_print(f"Error in get_submission: {str(e)}")
         return {"error": str(e)}
 
-def get_course_files(course_id):
+def get_course_files(ctx: CanvasToolContext, course_id):
     """
     List all files for a specific course.
 
@@ -309,9 +341,9 @@ def get_course_files(course_id):
     debug_print(f"Running get_course_files(course_id={course_id})")
     try:
         headers = {
-            "Authorization": f"Bearer {API_KEY}"
+            "Authorization": f"Bearer {ctx.api_key}"
         }
-        file_list_url = f"{API_URL}/api/v1/courses/{course_id}/files"
+        file_list_url = f"{ctx.api_url}/api/v1/courses/{course_id}/files"
         file_response = requests.get(file_list_url, headers=headers)
 
         if file_response.status_code != 200:
@@ -330,7 +362,7 @@ def get_course_files(course_id):
         debug_print(f"Error in get_course_files: {str(e)}")
         return {"error": str(e)}
 
-def get_people_in_course(course_id):
+def get_people_in_course(ctx: CanvasToolContext, course_id):
     """
     Get people (students, TAs, professors) in a course.
 
@@ -345,7 +377,7 @@ def get_people_in_course(course_id):
     """
     debug_print(f"Running get_people_in_course(course_id={course_id})")
     try:
-        course = canvas.get_course(course_id)
+        course = ctx.canvas.get_course(course_id)
 
         students = list(course.get_users(enrollment_type=["student"]))
         tas = list(course.get_users(enrollment_type=["ta"]))
@@ -363,7 +395,7 @@ def get_people_in_course(course_id):
         debug_print(f"Error in get_people_in_course: {str(e)}")
         return {"error": str(e)}
 
-def get_todo_list():
+def get_todo_list(ctx: CanvasToolContext):
     """
     Get unsubmitted assignments across all courses sorted by due date.
 
@@ -380,7 +412,7 @@ def get_todo_list():
     """
     debug_print("Running get_todo_list()")
     try:
-        user = canvas.get_current_user()
+        user = ctx.canvas.get_current_user()
         current_courses = user.get_favorite_courses()
 
         mtn_zone = ZoneInfo("America/Denver")
@@ -446,7 +478,7 @@ def get_todo_list():
         debug_print(f"Error in get_todo_list: {str(e)}")
         return {"error": str(e)}
 
-def get_unsubmitted_assignments(course_id):
+def get_unsubmitted_assignments(ctx: CanvasToolContext, course_id):
     """
     Get unsubmitted assignments for a specific course sorted by due date.
 
@@ -465,7 +497,7 @@ def get_unsubmitted_assignments(course_id):
     debug_print(f"Running get_unsubmitted_assignments(course_id={course_id})")
     try:
         # Retrieve the course object using the Canvas API
-        course = canvas.get_course(course_id)
+        course = ctx.canvas.get_course(course_id)
         # Get unsubmitted assignments for the course
         assignments = course.get_assignments(bucket='unsubmitted', include=['submission'])
 
@@ -521,7 +553,7 @@ def get_unsubmitted_assignments(course_id):
         debug_print(f"Error in get_unsubmitted_assignments: {str(e)}")
         return {"error": str(e)}
 
-def get_assignments_with_grades(course_id):
+def get_assignments_with_grades(ctx: CanvasToolContext, course_id):
     """
     Get detailed assignment grades for a specific course.
 
@@ -540,12 +572,12 @@ def get_assignments_with_grades(course_id):
     debug_print(f"Running get_assignments_with_grades(course_id={course_id})")
     try:
         headers = {
-            "Authorization": f"Bearer {API_KEY}"
+            "Authorization": f"Bearer {ctx.api_key}"
         }
 
         # Get the current user's ID
         user_response = requests.get(
-            f"{API_URL}/api/v1/users/self",
+            f"{ctx.api_url}/api/v1/users/self",
             headers=headers
         )
 
@@ -557,7 +589,7 @@ def get_assignments_with_grades(course_id):
 
         # Get all assignments for the course
         assignments_response = requests.get(
-            f"{API_URL}/api/v1/users/{user_id}/courses/{course_id}/assignments",
+            f"{ctx.api_url}/api/v1/users/{user_id}/courses/{course_id}/assignments",
             headers=headers
         )
 
@@ -572,7 +604,7 @@ def get_assignments_with_grades(course_id):
         for assignment in assignments:
             assignment_id = assignment["id"]
             submission_response = requests.get(
-                f"{API_URL}/api/v1/courses/{course_id}/assignments/{assignment_id}/submissions/{user_id}",
+                f"{ctx.api_url}/api/v1/courses/{course_id}/assignments/{assignment_id}/submissions/{user_id}",
                 headers=headers
             )
 
@@ -597,7 +629,7 @@ def get_assignments_with_grades(course_id):
         debug_print(f"Error in get_assignments_with_grades: {str(e)}")
         return {"error": str(e)}
 
-def get_course_modules(course_id):
+def get_course_modules(ctx: CanvasToolContext, course_id):
     """
     List all modules for a course.
 
@@ -614,7 +646,7 @@ def get_course_modules(course_id):
     """
     debug_print(f"Running get_course_modules(course_id={course_id})")
     try:
-        course = canvas.get_course(course_id)
+        course = ctx.canvas.get_course(course_id)
         modules = course.get_modules()
         result = [{"id": module.id,
                    "name": module.name,
@@ -628,7 +660,7 @@ def get_course_modules(course_id):
         debug_print(f"Error in get_course_modules: {str(e)}")
         return {"error": str(e)}
 
-def get_module_description(course_id, module_id):
+def get_module_description(ctx: CanvasToolContext, course_id, module_id):
     """
     Get description and basic information for a specific module.
 
@@ -646,7 +678,7 @@ def get_module_description(course_id, module_id):
     """
     debug_print(f"Running get_module_description(course_id={course_id}, module_id={module_id})")
     try:
-        course = canvas.get_course(course_id)
+        course = ctx.canvas.get_course(course_id)
         module = course.get_module(module_id)
 
         result = {
@@ -688,7 +720,7 @@ def get_module_description(course_id, module_id):
         debug_print(f"Error in get_module_description: {str(e)}")
         return {"error": str(e)}
 
-def get_course_grade(course_id):
+def get_course_grade(ctx: CanvasToolContext, course_id):
     """
     Get overall grade for a course, including a breakdown by assignment groups.
 
@@ -711,12 +743,12 @@ def get_course_grade(course_id):
     debug_print(f"Running get_course_grade(course_id={course_id})")
     try:
         headers = {
-            "Authorization": f"Bearer {API_KEY}"
+            "Authorization": f"Bearer {ctx.api_key}"
         }
 
         # Get the current user's ID
         user_response = requests.get(
-            f"{API_URL}/api/v1/users/self",
+            f"{ctx.api_url}/api/v1/users/self",
             headers=headers
         )
 
@@ -728,7 +760,7 @@ def get_course_grade(course_id):
 
         # Get all assignment groups for the course
         groups_response = requests.get(
-            f"{API_URL}/api/v1/courses/{course_id}/assignment_groups",
+            f"{ctx.api_url}/api/v1/courses/{course_id}/assignment_groups",
             headers=headers
         )
 
@@ -744,7 +776,7 @@ def get_course_grade(course_id):
 
             # Get assignments in this group
             assignments_response = requests.get(
-                f"{API_URL}/api/v1/courses/{course_id}/assignment_groups/{group_id}/assignments",
+                f"{ctx.api_url}/api/v1/courses/{course_id}/assignment_groups/{group_id}/assignments",
                 headers=headers
             )
 
@@ -760,7 +792,7 @@ def get_course_grade(course_id):
 
                 # Get the submission for this assignment
                 submission_response = requests.get(
-                    f"{API_URL}/api/v1/courses/{course_id}/assignments/{assignment_id}/submissions/{user_id}",
+                    f"{ctx.api_url}/api/v1/courses/{course_id}/assignments/{assignment_id}/submissions/{user_id}",
                     headers=headers
                 )
 
@@ -849,7 +881,7 @@ def get_course_grade(course_id):
         debug_print(f"Error in get_course_grade: {str(e)}")
         return {"error": str(e)}
 
-def get_syllabus(course_id):
+def get_syllabus(ctx: CanvasToolContext, course_id):
     """
     Get the syllabus for a course.
 
@@ -863,7 +895,7 @@ def get_syllabus(course_id):
     """
     debug_print(f"Running get_syllabus(course_id={course_id})")
     try:
-        course = canvas.get_course(course_id)
+        course = ctx.canvas.get_course(course_id)
         # CanvasAPI Course objects have a syllabus_body attribute
         html = getattr(course, 'syllabus_body', None)
         if html:
@@ -905,9 +937,11 @@ def handle_tool_call(request_json):
         dict: The result of the tool function execution, or an error message if the tool is unknown or fails.
     """
     try:
-        # Extract tool name and parameters from the request
+        # Extract tool name, parameters, and credentials from the request
         tool_name = request_json.get("tool")
         params = request_json.get("params", {})
+        canvas_url = request_json.get("canvas_url")
+        canvas_api_key = request_json.get("canvas_api_key")
 
         debug_print(f"Tool call request: tool={tool_name}, params={params}")
 
@@ -916,11 +950,17 @@ def handle_tool_call(request_json):
             debug_print(f"Unknown tool: {tool_name}")
             return {"error": f"Unknown tool: {tool_name}"}
 
+        # Prepare a context with the provided credentials
+        ctx = build_context(canvas_url, canvas_api_key)
+
         # Call the corresponding tool function with the provided parameters
         tool_function = TOOLS[tool_name]
-        result = tool_function(**params)
+        result = tool_function(ctx, **params)
 
         return result
+    except ValueError as e:
+        debug_print(f"Credential error: {str(e)}")
+        return {"error": str(e)}
     except Exception as e:
         # Handle any exceptions that occur during tool execution and log the error
         debug_print(f"Error in handle_tool_call: {str(e)}")

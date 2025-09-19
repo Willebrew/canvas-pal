@@ -1,11 +1,24 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { runTool }      from '@/lib/runTool';
 
 export const runtime = 'nodejs';
 
-export async function GET() {
+export async function POST(req: NextRequest) {
     try {
-        const todos = await runTool('get_todo_list');
+        const { canvasUrl, canvasApiKey } = await req.json();
+
+        if (!canvasUrl || !canvasApiKey) {
+            return NextResponse.json(
+                { error: 'Canvas credentials are required.' },
+                { status: 400 }
+            );
+        }
+
+        const todos = await runTool(
+            'get_todo_list',
+            {},
+            { canvasUrl, canvasApiKey }
+        );
         return NextResponse.json(todos);
     } catch (error: unknown) {
         const message =
@@ -16,4 +29,3 @@ export async function GET() {
         );
     }
 }
-

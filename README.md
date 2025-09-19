@@ -51,6 +51,9 @@ CanvasPal is a Next.js + TypeScript application built for a hackathon that trans
 - **Persistent Chat Context**  
   Stores conversation in `sessionStorage`, auto-scrolls, and supports cancellation.
 
+- **Bring Your Own Canvas Access**  
+  Deploy safely on Vercel—each user supplies their Canvas URL and API token at runtime, stored only in their browser session.
+
 - **Extensible**  
   Easily add new Canvas tools by updating the `TOOLS` mapping in `api/tool.py`.
 
@@ -124,16 +127,22 @@ User Browser
 Create a `.env.local` file in the project root:
 
 ```env
-# Next.js / Perplexity
-PERPLEXITY_API_KEY=your_perplexity_key
+# Required – Groq LLM access
+LLM_API_KEY=your_groq_api_key
 
-# Canvas API
-CANVAS_API_URL=https://canvas.your.school/api/v1
+# Optional – Canvas defaults for local development / server-side tools
+CANVAS_API_URL=https://canvas.your.school
 CANVAS_API_KEY=your_canvas_key
 
-# Optional debug
+# Optional – expose defaults to the browser (use only for local dev)
+NEXT_PUBLIC_CANVAS_API_URL=https://canvas.your.school
+NEXT_PUBLIC_CANVAS_API_KEY=your_canvas_key
+
+# Optional debug flag for the Python bridge
 DEBUG=true
 ```
+
+> On Vercel you only need `LLM_API_KEY`. CanvasPal now prompts each user for their Canvas URL and personal access token at runtime, keeping those secrets in the browser session only. If you set the optional `CANVAS_API_URL`, provide the base domain (for example `https://school.instructure.com`) without `/api/v1`. The `NEXT_PUBLIC_*` variants are bundled client-side—use them only for local development to prefill the credential form.
 
 <a id="running-locally"></a>
 ### Running Locally
@@ -148,13 +157,15 @@ npm run dev
 
 Visit <http://localhost:3000> to try it out.
 
+When the UI loads, click **Add credentials** (top bar) to provide your Canvas base URL (for example `https://school.instructure.com`, without `/api/v1`) and personal access token if you didn’t set them in `.env.local`.
+
 <a id="deployment"></a>
 ### Deployment
 
 1. Push to GitHub.
-2. Connect your repo to Vercel.
-3. Add the same environment variables in Vercel’s dashboard.
-4. Deploy – CanvasPal goes live!
+2. Connect your repo to Vercel and select `main` (or your release branch).
+3. In **Project Settings → Environment Variables**, add `LLM_API_KEY` with your Groq API token (other keys are optional).
+4. Deploy. Each visitor enters their own Canvas URL/API token via the in-app credentials dialog, so no Canvas secrets live on the server.
 
 ---
 

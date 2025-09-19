@@ -136,6 +136,12 @@ interface PlanJson  { steps: ToolCall[] }
  */
 interface StepLog   { step: ToolCall; output: string }
 
+interface ChatRequest {
+    messages: Msg[];
+    canvasUrl?: string;
+    canvasApiKey?: string;
+}
+
 /**
  * Maximum number of messages to keep in history.
  */
@@ -281,7 +287,17 @@ async function* streamLLM(prompt: string, history: Msg[]): AsyncGenerator<string
  * Handles POST requests to the chat API route.
  */
 export async function POST(req: NextRequest) {
-    const { messages }: { messages: Msg[] } = await req.json();
+    const { messages, canvasUrl, canvasApiKey }: ChatRequest = await req.json();
+
+    if (!canvasUrl || !canvasApiKey) {
+        return NextResponse.json(
+            { error: 'Canvas credentials are required.' },
+            { status: 400 }
+        );
+    }
+
+    const credentials = { canvasUrl, canvasApiKey };
+
     const latest = messages.at(-1)?.content.trim() || '';
 
     // Prepare history for the LLM (strip out any <!--CONTEXT--> wrappers)
@@ -318,7 +334,11 @@ export async function POST(req: NextRequest) {
                 const log: StepLog[] = [];
                 for (let i = 0; i < steps.length; i++) {
                     send('status', { message: `Step ${i + 1}/${steps.length}` });
-                    const out = await runTool(steps[i].tool, steps[i].params ?? {});
+                    const out = await runTool(
+                        steps[i].tool,
+                        steps[i].params ?? {},
+                        credentials
+                    );
                     log.push({ step: steps[i], output: JSON.stringify(out) });
                     send('step', { index: i, step: steps[i], output: out });
                     await new Promise(r => setTimeout(r, STEP_DELAY));

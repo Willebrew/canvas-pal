@@ -24,6 +24,29 @@ interface TodoItem {
     course_name: string;     course_id: number; assignment_id: number;
 }
 
+interface CanvasCredentials {
+    canvasUrl: string;
+    apiKey: string;
+}
+
+const CREDENTIALS_KEY = 'canvaspal_canvas_credentials';
+const CANVAS_API_SUFFIX = '/api/v1';
+
+const DEFAULT_CANVAS_URL = process.env.NEXT_PUBLIC_CANVAS_API_URL ?? '';
+const DEFAULT_CANVAS_API_KEY = process.env.NEXT_PUBLIC_CANVAS_API_KEY ?? '';
+
+const normalizeCanvasUrl = (value: string) => {
+    let cleaned = value.trim();
+    if (cleaned.endsWith('/')) {
+        cleaned = cleaned.slice(0, -1);
+    }
+    const lower = cleaned.toLowerCase();
+    if (lower.endsWith(CANVAS_API_SUFFIX)) {
+        cleaned = cleaned.slice(0, -CANVAS_API_SUFFIX.length);
+    }
+    return cleaned;
+};
+
 const toDisplay = (c: unknown) =>
     typeof c === 'string'
         ? c
@@ -101,6 +124,12 @@ function OverflowScroll({ text }: { text: string }) {
 }
 
 export default function HomePage() {
+    /* canvas credentials */
+    const [credentials, setCredentials] = useState<CanvasCredentials | null>(null);
+    const [credentialsOpen, setCredentialsOpen] = useState(false);
+    const [pendingCreds, setPendingCreds] = useState<CanvasCredentials>({ canvasUrl: '', apiKey: '' });
+    const [credentialError, setCredentialError] = useState<string | null>(null);
+
     /* chat & plan state */
     const [messages, setMessages] = useState<Msg[]>([]);
     const [plan,     setPlan]     = useState<PlanItem[]>([]); // typed PlanItem[]
@@ -123,6 +152,35 @@ export default function HomePage() {
     const showSplash = messages.length === 0;
     const [mounted, setMounted] = useState(false);
     useEffect(() => setMounted(true), []);
+    useEffect(() => {
+        try {
+            const saved = sessionStorage.getItem(CREDENTIALS_KEY);
+            if (!saved) return;
+            const parsed = JSON.parse(saved);
+            if (parsed?.canvasUrl && parsed?.apiKey) {
+                setCredentials({
+                    canvasUrl: normalizeCanvasUrl(parsed.canvasUrl),
+                    apiKey: parsed.apiKey,
+                });
+            }
+        } catch {
+            sessionStorage.removeItem(CREDENTIALS_KEY);
+        }
+    }, []);
+    useEffect(() => {
+        if (credentials) return;
+        if (!DEFAULT_CANVAS_URL || !DEFAULT_CANVAS_API_KEY) return;
+        const normalized = normalizeCanvasUrl(DEFAULT_CANVAS_URL);
+        setCredentials({ canvasUrl: normalized, apiKey: DEFAULT_CANVAS_API_KEY });
+        setPendingCreds({ canvasUrl: normalized, apiKey: DEFAULT_CANVAS_API_KEY });
+    }, [credentials]);
+    useEffect(() => {
+        if (!credentials) {
+            sessionStorage.removeItem(CREDENTIALS_KEY);
+            return;
+        }
+        sessionStorage.setItem(CREDENTIALS_KEY, JSON.stringify(credentials));
+    }, [credentials]);
     const pixels = useMemo(() => {
         const colors = ['bg-red-600','bg-yellow-500','bg-green-600','bg-purple-600','bg-pink-600','bg-orange-500'];
         return Array.from({ length: 60 }, (_, id) => ({
@@ -132,18 +190,85 @@ export default function HomePage() {
         }));
     }, []);
 
+    const openCredentials = useCallback(() => {
+        setPendingCreds(credentials ?? { canvasUrl: '', apiKey: '' });
+        setCredentialError(null);
+        setCredentialsOpen(true);
+    }, [credentials]);
+
+    const closeCredentials = useCallback(() => {
+        setCredentialsOpen(false);
+        setCredentialError(null);
+    }, []);
+
+    const clearCredentials = useCallback(() => {
+        setCredentials(null);
+        setPendingCreds({ canvasUrl: '', apiKey: '' });
+        setCredentialError(null);
+    }, []);
+
+    const handleCredentialSave = useCallback((event: FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        const url = pendingCreds.canvasUrl.trim();
+        const key = pendingCreds.apiKey.trim();
+
+        if (!url || !key) {
+            setCredentialError('Both Canvas URL and API key are required.');
+            return;
+        }
+
+        const normalizedUrl = normalizeCanvasUrl(url);
+
+        setCredentials({ canvasUrl: normalizedUrl, apiKey: key });
+        setPendingCreds({ canvasUrl: normalizedUrl, apiKey: key });
+        setCredentialError(null);
+        setCredentialsOpen(false);
+    }, [pendingCreds]);
+
     /* fetch widgets once */
     useEffect(() => {
+        if (!credentials) {
+            setCourses([]);
+            setTodos([]);
+            return;
+        }
+
         (async () => {
             try {
+                const body = JSON.stringify({
+                    canvasUrl: credentials.canvasUrl,
+                    canvasApiKey: credentials.apiKey,
+                });
                 const [cRes, tRes] = await Promise.all([
-                    fetch('/api/courses'), fetch('/api/todo'),
+                    fetch('/api/courses', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body,
+                    }),
+                    fetch('/api/todo', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body,
+                    }),
                 ]);
-                setCourses(await cRes.json());
-                setTodos(await tRes.json());
-            } catch { /* ignore */ }
+
+                if (cRes.ok) {
+                    setCourses(await cRes.json());
+                } else {
+                    setCourses([]);
+                }
+
+                if (tRes.ok) {
+                    setTodos(await tRes.json());
+                } else {
+                    setTodos([]);
+                }
+            } catch {
+                setCourses([]);
+                setTodos([]);
+            }
         })();
-    }, []);
+    }, [credentials]);
 
     /* restore & persist chat */
     useEffect(() => {
@@ -176,6 +301,15 @@ export default function HomePage() {
         const text = override?.trim() ?? input.trim();
         if (!text || loading) return;
 
+        if (!credentials) {
+            setPendingCreds(prev => (
+                prev.canvasUrl || prev.apiKey ? prev : { canvasUrl: '', apiKey: '' }
+            ));
+            setCredentialsOpen(true);
+            setCredentialError('Enter your Canvas URL and API key to continue.');
+            return;
+        }
+
         const systemMsg = { role:'system', content: JSON.stringify({ courses, todos }) };
         const userMsg   = { role:'user', content:text } as Msg;
 
@@ -191,7 +325,11 @@ export default function HomePage() {
             const res = await fetch('/api/chat', {
                 method:'POST',
                 headers:{ 'Content-Type':'application/json' },
-                body: JSON.stringify({ messages:history }),
+                body: JSON.stringify({
+                    messages: history,
+                    canvasUrl: credentials.canvasUrl,
+                    canvasApiKey: credentials.apiKey,
+                }),
                 signal: ctrl.signal,
             });
             if (!res.ok) throw new Error(await res.text());
@@ -232,7 +370,7 @@ export default function HomePage() {
         } finally {
             setLoading(false); abortRef.current = null;
         }
-    }, [input, loading, messages, courses, todos]);
+    }, [input, loading, messages, courses, todos, credentials]);
 
     const handleSubmit = (e: FormEvent) => { e.preventDefault(); send(); };
 
@@ -243,7 +381,42 @@ export default function HomePage() {
                 onNewChatAction={newChat}
                 onHistoryToggleAction={() => setHistoryOpen(o => !o)}
                 historyOpen={historyOpen}
+                onCredentialsAction={openCredentials}
             />
+
+            <div className="border-b border-base bg-background/40 px-6 py-3 flex items-center justify-between text-sm">
+                <div>
+                    {credentials
+                        ? (
+                            <span className="text-muted-foreground">
+                                Connected to <span className="font-medium text-foreground">{credentials.canvasUrl}</span>
+                            </span>
+                        )
+                        : (
+                            <span className="text-destructive">
+                                Canvas credentials required. Add your Canvas URL and API key to begin.
+                            </span>
+                        )}
+                </div>
+                <div className="flex items-center gap-2">
+                    {credentials && (
+                        <button
+                            type="button"
+                            onClick={clearCredentials}
+                            className="rounded-full border border-base px-3 py-1 text-xs transition hover:bg-background/30"
+                        >
+                            Clear
+                        </button>
+                    )}
+                    <button
+                        type="button"
+                        onClick={openCredentials}
+                        className="rounded-full bg-primary px-3 py-1 text-xs font-medium text-primary-foreground transition hover:bg-primary/90"
+                    >
+                        {credentials ? 'Update credentials' : 'Add credentials'}
+                    </button>
+                </div>
+            </div>
 
             {/* plan banner */}
             <AnimatePresence>
@@ -390,7 +563,8 @@ export default function HomePage() {
                         <form onSubmit={handleSubmit} className="flex items-center space-x-2">
                             <input
                                 value={input} onChange={e => setInput(e.target.value)}
-                                disabled={loading} placeholder="Ask CanvasPal anything…"
+                                disabled={loading || !credentials}
+                                placeholder={credentials ? 'Ask CanvasPal anything…' : 'Add your Canvas credentials to start'}
                                 className="flex-1 p-3 bg-transparent outline-none placeholder:text-muted-foreground text-sm"/>
                             <button
                                 type={loading ? 'button' : 'submit'} onClick={loading ? cancel : undefined}
@@ -398,13 +572,72 @@ export default function HomePage() {
                                     loading
                                         ? 'text-destructive border border-destructive hover:bg-destructive/10'
                                         : 'text-primary border-primary hover:bg-primary/10'
-                                }`}>
+                                }`}
+                                disabled={!credentials && !loading}
+                            >
                                 {loading ? 'Cancel' : 'Send'}
                             </button>
                         </form>
                     </div>
                 </motion.div>
             </motion.div>
+        </motion.div>
+            {credentialsOpen && (
+                <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 px-4">
+                    <div className="w-full max-w-md rounded-2xl border border-base bg-background p-6 shadow-xl">
+                        <h2 className="text-lg font-semibold mb-2">Canvas credentials</h2>
+                        <p className="text-sm text-muted-foreground mb-4">
+                            These values stay in your browser session and are sent with each request to CanvasPal.
+                            Clear them when you’re done for security.
+                        </p>
+                        {credentialError && (
+                            <div className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                                {credentialError}
+                            </div>
+                        )}
+                        <form onSubmit={handleCredentialSave} className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium mb-1" htmlFor="canvas-url">Canvas URL</label>
+                                <input
+                                    id="canvas-url"
+                                    value={pendingCreds.canvasUrl}
+                                    onChange={event => setPendingCreds(prev => ({ ...prev, canvasUrl: event.target.value }))}
+                                    placeholder="https://school.instructure.com"
+                                    className="w-full rounded-md border border-base bg-background/80 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                    autoComplete="url"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium mb-1" htmlFor="canvas-api-key">Canvas API key</label>
+                                <input
+                                    id="canvas-api-key"
+                                    type="password"
+                                    value={pendingCreds.apiKey}
+                                    onChange={event => setPendingCreds(prev => ({ ...prev, apiKey: event.target.value }))}
+                                    placeholder="Paste your personal access token"
+                                    className="w-full rounded-md border border-base bg-background/80 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                    autoComplete="new-password"
+                                />
+                            </div>
+                            <div className="flex justify-end gap-2">
+                                <button
+                                    type="button"
+                                    onClick={closeCredentials}
+                                    className="rounded-md border border-base px-3 py-2 text-sm transition hover:bg-background/30"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition hover:bg-primary/90"
+                                >
+                                    Save credentials
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
         </motion.div>
     );
 }
