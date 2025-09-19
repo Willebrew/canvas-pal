@@ -138,6 +138,9 @@ CANVAS_API_KEY=your_canvas_key
 NEXT_PUBLIC_CANVAS_API_URL=https://canvas.your.school
 NEXT_PUBLIC_CANVAS_API_KEY=your_canvas_key
 
+# Optional – absolute origin for server-to-server calls (defaults to localhost/VERCEL_URL)
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
+
 # Optional debug flag for the Python bridge
 DEBUG=true
 ```
