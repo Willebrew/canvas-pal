@@ -102,8 +102,8 @@ User Browser
 
 1. **Clone the repo**  
    ```bash
-   git clone https://github.com/your-org/canvaspal.git
-   cd canvaspal
+   git clone https://github.com/your-org/canvas-pal.git
+   cd canvas-pal
    ```
 
 2. **Install dependencies**
@@ -125,11 +125,11 @@ Create a `.env.local` file in the project root:
 
 ```env
 # Next.js / Perplexity
-PERPLEXITY_API_KEY=your_perplexity_key
+GROQ_API_KEY=your_groq_key
 
 # Canvas API
-CANVAS_API_URL=https://canvas.your.school/api/v1
-CANVAS_API_KEY=your_canvas_key
+CANVAS_API_URL=your-school-canvas-domain
+CANVAS_API_KEY=your_canvas_api-key
 
 # Optional debug
 DEBUG=true
